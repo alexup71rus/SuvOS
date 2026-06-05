@@ -18,7 +18,7 @@ fallback() {
   cat >"$OUT" <<'EOF'
 #!/bin/sh
 echo "C++ demo binary was not built on the host."
-echo "Source is available at /system/suvos/src/cpp/hello.cpp in the project tree."
+echo "Source is available in the project tree at src/cpp/hello.cpp."
 EOF
   chmod +x "$OUT"
 }

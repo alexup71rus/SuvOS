@@ -1,4 +1,4 @@
-.PHONY: all assets initramfs initramfs-core cpp suvosd suvosctl suvos-gateway ui ui-check ui-fix run run-core run-graphics run-core-graphics test test-core test-full clean distclean
+.PHONY: all assets initramfs initramfs-core cpp suvosd suvosctl suvos-gateway suvos-splash ui ui-check ui-fix run run-core run-graphics run-core-graphics test test-core test-full clean distclean
 
 all: initramfs
 
@@ -16,6 +16,9 @@ suvosctl:
 
 suvos-gateway:
 	scripts/build-suvos-gateway.sh
+
+suvos-splash:
+	scripts/build-suvos-splash.sh
 
 ui:
 	scripts/build-ui.sh
@@ -39,10 +42,10 @@ run-core: initramfs-core
 	scripts/run-suvos.sh
 
 run-graphics: all
-	SUVOS_DISPLAY=cocoa SUVOS_VGA=std SUVOS_APPEND="console=tty0 rdinit=/init quiet loglevel=3 panic=-1 suvos.graphics=1" scripts/run-suvos.sh
+	SUVOS_DISPLAY=cocoa SUVOS_VGA=std SUVOS_APPEND="console=ttyS0 rdinit=/init quiet loglevel=3 panic=-1 vga=791 suvos.graphics=1" scripts/run-suvos.sh
 
 run-core-graphics: initramfs-core
-	SUVOS_DISPLAY=cocoa SUVOS_VGA=std SUVOS_APPEND="console=tty0 rdinit=/init quiet loglevel=3 panic=-1 suvos.graphics=1" scripts/run-suvos.sh
+	SUVOS_DISPLAY=cocoa SUVOS_VGA=std SUVOS_APPEND="console=ttyS0 rdinit=/init quiet loglevel=3 panic=-1 vga=791 suvos.graphics=1" scripts/run-suvos.sh
 
 test: test-core
 
@@ -54,7 +57,7 @@ test-full: initramfs
 
 clean:
 	chmod -R u+w build/rootfs 2>/dev/null || true
-	rm -rf build/rootfs build/initramfs build/cpp build/suvosd build/suvosctl build/suvos-gateway build/ui build/test-boot*.log
+	rm -rf build/rootfs build/initramfs build/cpp build/suvosd build/suvosctl build/suvos-gateway build/suvos-splash build/ui build/test-boot*.log
 
 distclean:
 	chmod -R u+w build/rootfs 2>/dev/null || true

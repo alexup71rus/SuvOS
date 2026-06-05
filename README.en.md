@@ -13,6 +13,7 @@ SuvOS is currently a minimal x86_64 Linux-based OS prototype:
 - `suvos` CLI client over FIFO IPC;
 - internal Unix socket API at `/run/suvosd/control.sock` for the future HTTP gateway;
 - diagnostic socket client `suvosctl`;
+- framebuffer splash utility `suvos-splash` for the first graphics smoke layer;
 - localhost-only HTTP gateway `suvos-gateway` on `127.0.0.1:8080`;
 - structured JSON endpoints for status, roles, and the app registry;
 - first web UI page served through `suvos-gateway`;
@@ -78,7 +79,7 @@ make run-graphics
 make run-core-graphics
 ```
 
-On macOS, the current Homebrew QEMU opens the window through `-display cocoa`; `make run-graphics` currently uses `std` VGA as the most compatible early mode. This mode is for framebuffer/graphics experiments for now; the full browser kiosk UI comes later, after the image gains a Wayland/Chromium stack.
+On macOS, the current Homebrew QEMU opens the window through `-display cocoa`; `make run-graphics` currently uses `std` VGA as the most compatible early mode. In this mode init runs `suvos-splash`, which attempts to fill `/dev/fb0` with a solid color. If the framebuffer is unavailable, boot continues through the serial console. The full browser kiosk UI comes later, after the image gains a Wayland/Chromium stack.
 
 The build creates an external bootstrap secret:
 
@@ -147,6 +148,8 @@ This first filesystem is initramfs-only. Files created outside the read-only sys
   +-- /system/suvos/bin/suvosctl
   +-- /system/suvos/bin/suvos-gateway
   |     +-- http://127.0.0.1:8080/api/*
+  +-- /system/suvos/bin/suvos-splash
+  |     +-- optional /dev/fb0 color fill in suvos.graphics=1 mode
   +-- /system/suvos/bin/suvos-shell
         +-- suvos CLI
               +-- /run/suvosd/request

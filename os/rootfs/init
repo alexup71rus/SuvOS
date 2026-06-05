@@ -51,6 +51,11 @@ make_system_readonly() {
 prepare_data_root
 make_system_readonly
 
+if grep -qw 'suvos.graphics=1' /proc/cmdline 2>/dev/null; then
+  /system/suvos/bin/suvos-splash --color '#116149' >/tmp/suvos-splash.log 2>&1 || true
+  cat /tmp/suvos-splash.log >/dev/console 2>/dev/null || true
+fi
+
 clear 2>/dev/null || true
 suvos-motd 2>/dev/null || cat /etc/motd 2>/dev/null || true
 

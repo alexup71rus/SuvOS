@@ -265,6 +265,7 @@ suvos status
 - первая web UI лежит в `/system/suvos/ui` и открывается через `http://127.0.0.1:8080/`;
 - `/api/status`, `/api/roles` и `/api/apps` возвращают структурированный JSON, чтобы UI не парсил локализованный CLI-текст;
 - `/api/run?name=<app>` остается command endpoint с `exitCode` и `output`;
+- `suvos-splash` проверяет `/dev/fb0` и в `suvos.graphics=1` режиме пытается залить framebuffer сплошным цветом;
 - `suvosd` выполняет `status`, `roles`, `list`, `run`;
 - `suvosd run` запускает только приложения из `/system/suvos/apps/manifest.d/*.app`, а имена с `/` и `..` блокируются;
 - каждый request обрабатывается отдельным worker-процессом, чтобы зависший app не останавливал основной daemon loop;
@@ -346,6 +347,7 @@ poweroff
 После стабильного web UI запускаем графику:
 
 - QEMU window launch через `make run-graphics` или `make run-core-graphics`;
+- framebuffer smoke layer через `suvos-splash`, без Wayland/Cage/Chromium;
 - минимальный Wayland stack;
 - kiosk compositor, например Cage;
 - Chromium в `--kiosk` или `--app` режиме;

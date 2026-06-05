@@ -13,6 +13,7 @@ SuvOS сейчас является минимальным x86_64 Linux-based п
 - CLI `suvos`, который общается с `suvosd` через FIFO IPC;
 - внутренний Unix socket API в `/run/suvosd/control.sock` для будущего HTTP gateway;
 - диагностический socket client `suvosctl`;
+- framebuffer splash utility `suvos-splash` для первого графического smoke layer;
 - localhost-only HTTP gateway `suvos-gateway` на `127.0.0.1:8080`;
 - структурированные JSON endpoints для статуса, ролей и app registry;
 - первая web UI-страница, отдаваемая через `suvos-gateway`;
@@ -78,7 +79,7 @@ make run-graphics
 make run-core-graphics
 ```
 
-На macOS текущий Homebrew QEMU открывает окно через `-display cocoa`; `make run-graphics` пока использует `std` VGA как самый совместимый ранний режим. Этот режим нужен для framebuffer/графических экспериментов; полноценный браузерный kiosk UI появится позже, когда в образ будет добавлен Wayland/Chromium stack.
+На macOS текущий Homebrew QEMU открывает окно через `-display cocoa`; `make run-graphics` пока использует `std` VGA как самый совместимый ранний режим. В этом режиме init запускает `suvos-splash`, который пытается залить `/dev/fb0` сплошным цветом. Если framebuffer недоступен, boot продолжается через serial console. Полноценный браузерный kiosk UI появится позже, когда в образ будет добавлен Wayland/Chromium stack.
 
 Сборка создает внешний bootstrap-secret:
 
@@ -147,6 +148,8 @@ poweroff
   +-- /system/suvos/bin/suvosctl
   +-- /system/suvos/bin/suvos-gateway
   |     +-- http://127.0.0.1:8080/api/*
+  +-- /system/suvos/bin/suvos-splash
+  |     +-- optional /dev/fb0 color fill in suvos.graphics=1 mode
   +-- /system/suvos/bin/suvos-shell
         +-- suvos CLI
               +-- /run/suvosd/request

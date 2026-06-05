@@ -16,6 +16,7 @@ suvos status
 suvos roles
 suvos whoami
 suvos auth status
+suvos-splash --check
 test -s /system/suvos/security/root-bootstrap.sha256
 test -d /system/suvos/apps/manifest.d
 test -S /run/suvosd/control.sock

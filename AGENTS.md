@@ -32,6 +32,7 @@ Use Russian for user-facing explanations unless the user asks otherwise. Code id
 - Keep the first web UI under `/system/suvos/ui` and serve it through `suvos-gateway`; UI code must use the HTTP API instead of bypassing the gateway.
 - Keep browser-facing read endpoints structured JSON; avoid parsing localized CLI text in UI code.
 - Keep UI source under `src/ui`; copy only built `build/ui` artifacts into the initramfs image.
+- Keep `suvos-splash` framebuffer-only for now; do not add Wayland/Cage/Chromium until explicitly moving to the browser kiosk stage.
 - Root/bootstrap auth must keep the secret outside the image; the image may contain only verification material such as a hash.
 - Apps must be declared in `/system/suvos/apps/manifest.d/*.app`.
 - Runtime files may be shell/Python/Node during prototyping, but privileged logic belongs in `suvosd` or another compiled system component.
