@@ -374,7 +374,7 @@ Root остается только supervisor'ом для подготовки `
 
 Разрешение GUI-профиля задается на старте через QEMU `virtio-vga,xres=...,yres=...,edid=on`. Это дает параметризуемый стартовый режим для `make run-gui SUVOS_GUI_WIDTH=... SUVOS_GUI_HEIGHT=...`; `make test-gui-resolutions` проверяет 1024x768 и 1440x900. Полноценный live resize окна нужно проверять отдельно: он зависит не от web UI, а от цепочки QEMU Cocoa -> virtio-gpu -> Linux DRM -> wlroots/Cage.
 
-Render profile задается через `suvos.render=<profile>`. Default без параметра - `hardware`, чтобы реальный device path не был искусственно ограничен software rendering. QEMU Cocoa/TCG dev path использует `qemu-tcg`: он включает conservative software fallback и трактует GPU/Vulkan warnings как ожидаемое ограничение dev-эмуляции, а не как финальное поведение ОС.
+Render profile задается через `suvos.render=<profile>`. Default без параметра - `hardware`, чтобы реальный device path не был искусственно ограничен software rendering. QEMU Cocoa/TCG dev path использует `qemu-tcg`: Chromium запускается с ANGLE `gl-egl` и Mesa llvmpipe, а Vulkan/VAAPI отключены. Fatal `GLDisplayEGL`, SwANGLE/Vulkan и GPU-process initialization failures не считаются допустимым шумом: они означают, что browser shell может остаться за зеленым splash-экраном.
 
 Cursor theme, QEMU input devices и audio backend относятся к заменяемому GUI runtime layer. Они не должны становиться частью core-логики SuvOS. Текущий default: Alpine cursor package, USB HID keyboard/tablet/mouse через `qemu-xhci`, CoreAudio + virtio-sound на macOS host. Для input discovery нужен `eudev`: kernel modules создают `/dev/input/*`, а udev metadata позволяет libinput/wlroots/Cage увидеть эти устройства как usable seat devices.
 
@@ -541,6 +541,7 @@ MVP GUI boot:
 - browser window controls скрыты там, где это позволяет `cage -d` и Chromium/Wayland decoration protocol;
 - нет GNOME/KDE/session manager processes;
 - startup resolution проверяется автоматически, live resize остается manual/hardware validation;
+- GUI smoke делает QEMU screendump и не должен принимать зеленый splash как успешный browser shell;
 - serial/recovery path остается доступен.
 
 Settings/API:

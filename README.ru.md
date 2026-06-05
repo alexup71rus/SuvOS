@@ -126,7 +126,7 @@ SUVOS_CURSOR_THEME_PACKAGE=breeze-icons make run-gui
 
 Chromium в этом режиме запускается как Wayland-клиент через `--ozone-platform=wayland`. `xwayland` присутствует только потому, что текущий Alpine-пакет Cage 0.2.0 пытается поднять XWayland server при старте; это не означает, что SuvOS переходит на X11. Cage/Chromium запускаются не от root, а от системного пользователя `suvos-browser` с профилем в `/data/suvos/chromium`. `--no-sandbox` запрещен в default GUI boot; включить его можно только явным dev escape через `suvos.allow_no_sandbox=1` или `SUVOS_CHROMIUM_ALLOW_NO_SANDBOX=1`.
 
-Render profile задается через `suvos.render=<profile>`. Если параметр не указан, используется `hardware`, чтобы реальная ОС не осталась навсегда в software-only режиме. QEMU на Mac M через Cocoa/TCG запускается с `suvos.render=qemu-tcg`, где допустим software fallback и ожидаемы GPU/Vulkan warnings в serial log.
+Render profile задается через `suvos.render=<profile>`. Если параметр не указан, используется `hardware`, чтобы реальная ОС не осталась навсегда в software-only режиме. QEMU на Mac M через Cocoa/TCG запускается с `suvos.render=qemu-tcg`: Chromium в этом профиле использует ANGLE `gl-egl` поверх Mesa llvmpipe, а Vulkan/VAAPI отключены. Fatal `GLDisplayEGL`/GPU-process errors в этом профиле считаются багом и ломают GUI smoke-test.
 
 Стартовое разрешение GUI-профиля можно менять без правки скриптов:
 
@@ -151,7 +151,7 @@ GUI smoke-test:
 make test-gui-smoke
 ```
 
-Он тоже собирает GUI-профиль и открывает окно QEMU на ограниченное время. Тест проверяет serial-лог на запуск Cage/Chromium, пользователя `suvos-browser`, render profile, input/audio devices, отсутствие default `--no-sandbox` и ранний выход browser shell. Он не доказывает визуально, что браузер корректно отрисовал страницу. Для визуальной проверки всё еще нужен ручной `make run-gui`.
+Он тоже собирает GUI-профиль и открывает окно QEMU на ограниченное время. Тест проверяет serial-лог на запуск Cage/Chromium, пользователя `suvos-browser`, render profile, input/audio devices, отсутствие default `--no-sandbox`, ранний выход browser shell и fatal GL/GPU ошибки. В конце тест делает QEMU `screendump` и падает, если framebuffer остался зеленым splash-экраном.
 
 Сборка создает внешний bootstrap-secret:
 

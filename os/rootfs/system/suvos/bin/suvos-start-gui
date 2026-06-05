@@ -247,6 +247,7 @@ esac
 echo "suvos-gui: render profile: $SUVOS_RENDER_PROFILE"
 
 prepare_chromium_sandbox || exit 1
+CHROMIUM_ENV_PREFIX=""
 
 set -- "$CHROMIUM_BIN" \
   --ozone-platform=wayland \
@@ -258,8 +259,11 @@ set -- "$CHROMIUM_BIN" \
   --disable-dev-shm-usage
 
 if [ "$SUVOS_RENDER_PROFILE" = "qemu-tcg" ]; then
+  CHROMIUM_ENV_PREFIX="LIBGL_ALWAYS_SOFTWARE=${LIBGL_ALWAYS_SOFTWARE:-1} MESA_LOADER_DRIVER_OVERRIDE=${MESA_LOADER_DRIVER_OVERRIDE:-llvmpipe}"
   set -- "$@" \
-    --disable-gpu \
+    --use-gl=angle \
+    --use-angle=gl-egl \
+    --disable-vulkan \
     --disable-accelerated-video-decode \
     --disable-features=Vulkan,VulkanFromANGLE,VaapiVideoDecodeLinuxGL,VaapiVideoEncoder
 fi
@@ -294,5 +298,14 @@ set -- "$@" "$SUVOS_GUI_URL"
 
 echo "suvos-gui: starting Cage with Chromium"
 echo "suvos-gui: url=$SUVOS_GUI_URL"
+printf 'suvos-gui: chromium argv:'
+for arg in "$@"; do
+  printf ' [%s]' "$arg"
+done
+printf '\n'
 # Intentional shell splitting: this variable is a developer boot override.
+if [ -n "$CHROMIUM_ENV_PREFIX" ]; then
+  exec su-exec "$BROWSER_USER" cage $SUVOS_CAGE_FLAGS -- env $CHROMIUM_ENV_PREFIX "$@"
+fi
+
 exec su-exec "$BROWSER_USER" cage $SUVOS_CAGE_FLAGS -- "$@"

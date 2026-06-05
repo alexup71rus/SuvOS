@@ -126,7 +126,7 @@ SUVOS_CURSOR_THEME_PACKAGE=breeze-icons make run-gui
 
 Chromium still runs as a Wayland client through `--ozone-platform=wayland`. `xwayland` is present only because the current Alpine Cage 0.2.0 package tries to start an XWayland server during boot; this does not mean SuvOS is switching to X11. Cage/Chromium run as the `suvos-browser` system user, not as root, with browser state under `/data/suvos/chromium`. `--no-sandbox` is forbidden in the default GUI boot; it can only be enabled through the explicit dev escape `suvos.allow_no_sandbox=1` or `SUVOS_CHROMIUM_ALLOW_NO_SANDBOX=1`.
 
-The render profile is selected through `suvos.render=<profile>`. If the parameter is omitted, SuvOS uses `hardware` so the real OS does not become permanently software-only. The Mac M QEMU Cocoa/TCG dev run uses `suvos.render=qemu-tcg`, where software fallback is allowed and GPU/Vulkan warnings in the serial log are expected.
+The render profile is selected through `suvos.render=<profile>`. If the parameter is omitted, SuvOS uses `hardware` so the real OS does not become permanently software-only. The Mac M QEMU Cocoa/TCG dev run uses `suvos.render=qemu-tcg`: Chromium uses ANGLE `gl-egl` on Mesa llvmpipe in this profile, while Vulkan/VAAPI are disabled. Fatal `GLDisplayEGL`/GPU-process errors in this profile are treated as bugs and fail the GUI smoke test.
 
 The GUI profile startup resolution can be changed without editing scripts:
 
@@ -151,7 +151,7 @@ GUI smoke test:
 make test-gui-smoke
 ```
 
-It also builds the GUI profile and opens a QEMU window for a bounded period. The test checks the serial log for Cage/Chromium startup, the `suvos-browser` user, render profile, input/audio devices, absence of default `--no-sandbox`, and early browser-shell exit. It does not visually prove that the browser rendered the page correctly. Manual `make run-gui` is still needed for visual validation.
+It also builds the GUI profile and opens a QEMU window for a bounded period. The test checks the serial log for Cage/Chromium startup, the `suvos-browser` user, render profile, input/audio devices, absence of default `--no-sandbox`, early browser-shell exit, and fatal GL/GPU errors. At the end, it captures a QEMU `screendump` and fails if the framebuffer is still the green splash screen.
 
 The build creates an external bootstrap secret:
 
