@@ -44,6 +44,12 @@ while true; do
     roles)
       suvos roles
       ;;
+    whoami)
+      suvos whoami
+      ;;
+    auth)
+      suvos auth "$@"
+      ;;
     run)
       suvos run "$@"
       ;;

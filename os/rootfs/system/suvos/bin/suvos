@@ -81,7 +81,7 @@ case "$command" in
   help|-h|--help)
     usage
     ;;
-  status|roles|role|list|run|ping)
+  status|roles|role|whoami|auth|list|run|ping)
     send_request "$@"
     ;;
   *)

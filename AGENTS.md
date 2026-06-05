@@ -14,6 +14,8 @@ Use Russian for user-facing explanations unless the user asks otherwise. Code id
 - Test through QEMU only.
 - Do not remove generated boot artifacts unless the user asks or they are clearly temporary cache/log/rootfs output.
 - Do not commit `build/` artifacts.
+- Do not print, paste, commit, or move `build/secrets/root-bootstrap.secret` into the image.
+- If root/bootstrap auth is discussed, refer to the secret path instead of revealing its value unless the user explicitly asks to inspect it.
 - Do not weaken the `/system/suvos` read-only boot behavior without calling it out explicitly.
 
 ## Architecture Rules
@@ -22,6 +24,7 @@ Use Russian for user-facing explanations unless the user asks otherwise. Code id
 - Keep `/opt/suvos` as a compatibility symlink only.
 - `suvosd` is the privileged control plane and should stay compiled C++.
 - `suvos` CLI and future UI must talk to `suvosd`; they must not launch arbitrary system paths directly.
+- Root/bootstrap auth must keep the secret outside the image; the image may contain only verification material such as a hash.
 - Apps must be declared in `/system/suvos/apps/registry.tsv`.
 - Runtime files may be shell/Python/Node during prototyping, but privileged logic belongs in `suvosd` or another compiled system component.
 - Keep localization wired through `SUVOS_LANG`; currently supported values are `ru` and `en`.

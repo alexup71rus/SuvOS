@@ -66,6 +66,21 @@ init / supervisor
 - Системные скрипты должны лежать в read-only зоне и обновляться только подписанным обновлением.
 - Низкоуровневые процессы нужно запускать от отдельных пользователей, с минимальными правами, seccomp/AppArmor/SELinux там, где это оправдано.
 
+## Bootstrap-root и создание пользователя
+
+Для раннего прототипа root-доступ в control plane оформляется через bootstrap-secret:
+
+- во время сборки создается длинный случайный secret;
+- secret хранится вне образа, сейчас в `build/secrets/root-bootstrap.secret`;
+- в initramfs попадает только SHA-256 hash: `/system/suvos/security/root-bootstrap.sha256`;
+- `suvosd` может проверить secret и разблокировать runtime-роль `root` только для текущей сессии;
+- после reboot runtime-сессия снова стартует в роли `setup`;
+- обычный пользователь пока не создается, потому что первый полноценный flow должен быть частью браузерного UI.
+
+Это не финальная пользовательская модель. В будущем первый запуск должен требовать создание обычного пользователя до начала работы в UI. Пароль пользователя можно будет использовать для локальных сценариев вроде разблокировки устройства после сна, но root/bootstrap-secret должен оставаться отдельным механизмом владения устройством.
+
+Если SuvOS будет поставляться как один общий образ для многих устройств, нельзя зашивать один общий root/claim secret в этот образ. Для реального устройства лучше генерировать уникальный claim code на этапе provisioning, привязывать его к device identity и хранить состояние в защищенном writable-разделе, TPM/secure enclave или через сервер активации. Hash в образе подходит для текущего VM-прототипа и индивидуальных dev-сборок, но не для массового одинакового образа.
+
 ## Почему браузер - не самая сложная часть
 
 Внешне кажется, что сложнее всего "встроить браузер". На практике первые трудные места будут такими:
@@ -212,7 +227,10 @@ suvos status
 - пути из registry канонизируются и допускаются только под `/system/suvos/apps` или `/system/suvos/bin`;
 - `/system/suvos` bind-mounted read-only во время boot;
 - базовая локализация включена через `/system/suvos/config/locale.conf`, поддерживаются `ru` и `en`;
-- role-system stub описан в `/system/suvos/security/roles.conf`, а C++ daemon сейчас всегда возвращает root/all permissions;
+- role policy описан в `/system/suvos/security/roles.conf`;
+- boot по умолчанию стартует в runtime-роли `setup`;
+- root bootstrap secret создается вне образа, а в образ попадает только SHA-256 hash;
+- `suvos auth root <bootstrap-secret>` разблокирует runtime-роль `root` для текущей boot-сессии;
 - есть статически собранный x86_64 C++ demo: `suvos run cpp-hello`;
 - есть Python runtime и demo app: `suvos run py-hello`;
 - есть Node.js runtime и demo app: `suvos run node-hello`.

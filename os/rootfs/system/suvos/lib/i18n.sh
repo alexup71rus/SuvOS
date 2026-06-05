@@ -18,6 +18,8 @@ suvos_t() {
   help                 Показать эту справку
   cd [dir]             Перейти в директорию
   roles                Показать текущую роль и права
+  whoami               Показать runtime-роль SuvOS
+  auth                 Управление bootstrap-auth
   suvos <command>      Выполнить управляющую команду SuvOS
   run <name> [args]    Запустить разрешенное приложение через suvosd
   exit                 Вернуться в shell loop
@@ -35,6 +37,9 @@ EOF
   suvos help
   suvos status
   suvos roles
+  suvos whoami
+  suvos auth status
+  suvos auth root <bootstrap-secret>
   suvos list
   suvos run <name> [args...]
 
@@ -61,6 +66,8 @@ Built-ins:
   help                 Show this help
   cd [dir]             Change directory
   roles                Show current role and permissions
+  whoami               Show the SuvOS runtime role
+  auth                 Manage bootstrap auth
   suvos <command>      Run SuvOS control command
   run <name> [args]    Run an allowed SuvOS app through suvosd
   exit                 Return to the shell loop
@@ -78,6 +85,9 @@ Usage:
   suvos help
   suvos status
   suvos roles
+  suvos whoami
+  suvos auth status
+  suvos auth root <bootstrap-secret>
   suvos list
   suvos run <name> [args...]
 

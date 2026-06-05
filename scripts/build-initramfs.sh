@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ROOTFS="$ROOT_DIR/build/rootfs"
 INITRAMFS="$ROOT_DIR/build/initramfs/suvos-initramfs.cpio.gz"
+ROOT_BOOTSTRAP_HASH="$("$ROOT_DIR/scripts/generate-root-secret.sh")"
 
 python3 "$ROOT_DIR/tools/fetch_alpine_assets.py"
 
@@ -32,6 +33,7 @@ cp "$ROOT_DIR/build/cpp/cpp-hello" "$ROOTFS/system/suvos/bin/cpp-hello"
 cp "$ROOT_DIR/build/suvosd/suvosd" "$ROOTFS/system/suvos/bin/suvosd"
 chmod +x "$ROOTFS/system/suvos/bin/cpp-hello" "$ROOTFS/system/suvos/bin/suvosd"
 cp "$ROOT_DIR/src/cpp/hello.cpp" "$ROOTFS/system/suvos/src/cpp/hello.cpp"
+cp "$ROOT_BOOTSTRAP_HASH" "$ROOTFS/system/suvos/security/root-bootstrap.sha256"
 
 chmod +x "$ROOTFS/init"
 chmod +x "$ROOTFS/system/suvos/bin/"*
@@ -42,6 +44,7 @@ chmod 0644 "$ROOTFS/system/suvos/apps/registry.tsv" \
   "$ROOTFS/system/suvos/config/locale.conf" \
   "$ROOTFS/system/suvos/lib/i18n.sh" \
   "$ROOTFS/system/suvos/security/roles.conf" \
+  "$ROOTFS/system/suvos/security/root-bootstrap.sha256" \
   "$ROOTFS/system/suvos/src/cpp/hello.cpp"
 find "$ROOTFS/system/suvos" -type d -exec chmod 0555 {} +
 find "$ROOTFS/system/suvos" -type f -exec chmod a-w {} +

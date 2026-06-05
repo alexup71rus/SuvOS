@@ -7,7 +7,8 @@ SuvOS is currently a minimal x86_64 Linux-based OS prototype:
 - SuvOS `/init`;
 - SuvOS console shell;
 - BusyBox for basic Unix-compatible commands;
-- role-system stub that currently grants root-like access;
+- basic `setup`/`root` role system;
+- root bootstrap secret generated outside the image, with only its hash embedded;
 - statically linked C++ `suvosd` daemon for privileged commands;
 - `suvos` CLI client over FIFO IPC;
 - app registry at `/system/suvos/apps/registry.tsv`;
@@ -40,6 +41,20 @@ make test
 
 This boots SuvOS in QEMU with `suvos.autotest=1`, runs basic commands, checks roles, verifies `/system/suvos` is read-only, runs shell/C++/Python/Node apps, and powers off.
 
+The build creates an external bootstrap secret:
+
+```text
+build/secrets/root-bootstrap.secret
+```
+
+This file is not included in the initramfs and is ignored by git. The image only receives:
+
+```text
+/system/suvos/security/root-bootstrap.sha256
+```
+
+`make clean` keeps `build/secrets`, while `make distclean` removes the whole `build/` directory and causes a new bootstrap secret to be generated on the next build.
+
 ## Run
 
 ```sh
@@ -53,6 +68,9 @@ help
 ls
 suvos status
 suvos roles
+suvos whoami
+suvos auth status
+suvos auth root <bootstrap-secret>
 suvos list
 suvos run hello
 suvos run cpp-hello
@@ -91,6 +109,18 @@ SuvOS-owned files live under:
 ```
 
 `/opt/suvos` is a compatibility symlink to `/system/suvos`.
+
+## Roles and Bootstrap Secret
+
+The current boot starts SuvOS in the `setup` runtime role. This role can read status, list the app registry, run demo applications, and attempt `auth root`. The full `root` runtime role is unlocked with:
+
+```sh
+suvos auth root <bootstrap-secret>
+```
+
+The secret exists only outside the image at `build/secrets/root-bootstrap.secret`. The read-only system area stores only its SHA-256 hash, so the secret itself is not exposed by the VM image.
+
+This is a prototype bootstrap model. The future browser UI should require normal user creation on first run, while the bootstrap secret acts as a proof-of-ownership or claim code. For real hardware, the secret should be provisioned per device instead of reusing one shared secret across all images.
 
 ## Localization
 

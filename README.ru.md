@@ -7,7 +7,8 @@ SuvOS сейчас является минимальным x86_64 Linux-based п
 - собственный `/init`;
 - консоль SuvOS;
 - BusyBox для базовых Unix-совместимых команд;
-- заготовка ролевой системы, которая пока дает права root;
+- базовая ролевая система `setup`/`root`;
+- root bootstrap secret генерируется вне образа, а в образ попадает только hash;
 - статически собранный C++ daemon `suvosd` для привилегированных команд;
 - CLI `suvos`, который общается с `suvosd` через FIFO IPC;
 - app registry в `/system/suvos/apps/registry.tsv`;
@@ -40,6 +41,20 @@ make test
 
 Команда загружает SuvOS в QEMU с `suvos.autotest=1`, проверяет базовые команды, роли, read-only защиту `/system/suvos`, запускает shell/C++/Python/Node apps и выключает VM.
 
+Сборка создает внешний bootstrap-secret:
+
+```text
+build/secrets/root-bootstrap.secret
+```
+
+Этот файл не входит в initramfs и игнорируется git. В образ копируется только:
+
+```text
+/system/suvos/security/root-bootstrap.sha256
+```
+
+`make clean` не удаляет `build/secrets`, а `make distclean` удаляет весь `build/` и приведет к генерации нового bootstrap-secret при следующей сборке.
+
 ## Запуск
 
 ```sh
@@ -53,6 +68,9 @@ help
 ls
 suvos status
 suvos roles
+suvos whoami
+suvos auth status
+suvos auth root <bootstrap-secret>
 suvos list
 suvos run hello
 suvos run cpp-hello
@@ -91,6 +109,18 @@ poweroff
 ```
 
 `/opt/suvos` является compatibility symlink на `/system/suvos`.
+
+## Роли и Bootstrap-Secret
+
+Текущий boot запускает SuvOS в runtime-роли `setup`. Эта роль может читать статус, смотреть список app registry, выполнять demo-приложения и делать попытку `auth root`. Полная runtime-роль `root` разблокируется командой:
+
+```sh
+suvos auth root <bootstrap-secret>
+```
+
+Секрет лежит только вне образа в `build/secrets/root-bootstrap.secret`. Внутри read-only системной зоны хранится только SHA-256 hash, поэтому сам секрет не раскрывается из VM-образа.
+
+Это прототипная bootstrap-модель. В будущей браузерной UI первый запуск должен требовать создание обычного пользователя, а bootstrap-secret использовать как proof-of-ownership/claim code. Для реального устройства секрет лучше генерировать при provisioning конкретного устройства, а не переиспользовать один общий секрет для всех образов.
 
 ## Локализация
 

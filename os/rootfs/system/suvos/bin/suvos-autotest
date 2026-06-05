@@ -7,6 +7,14 @@ echo "pwd=$(pwd)"
 suvos ping
 suvos status
 suvos roles
+suvos whoami
+suvos auth status
+test -s /system/suvos/security/root-bootstrap.sha256
+if suvos auth root wrong-bootstrap-secret >/tmp/suvos-auth-test.out 2>&1; then
+  echo "invalid root bootstrap secret was accepted"
+  exit 1
+fi
+cat /tmp/suvos-auth-test.out
 suvos list
 if touch /system/suvos/.rw-test >/tmp/suvos-ro-test.out 2>&1; then
   echo "system root is writable"
