@@ -1,0 +1,33 @@
+#!/bin/sh
+
+set -eu
+
+echo "SUVOS_AUTOTEST_BEGIN"
+echo "pwd=$(pwd)"
+suvos ping
+suvos status
+suvos roles
+suvos list
+if touch /system/suvos/.rw-test >/tmp/suvos-ro-test.out 2>&1; then
+  echo "system root is writable"
+  rm -f /system/suvos/.rw-test
+  exit 1
+fi
+echo "SYSTEM_RO_PASS"
+mkdir -p /tmp/suvos-test
+cd /tmp/suvos-test
+echo "created-by-autotest" > sample.txt
+ls -la
+cat sample.txt
+suvos run hello
+suvos run cpp-hello
+python3 --version
+node --version
+suvos run py-hello
+suvos run node-hello
+if suvos run ../init >/tmp/suvos-invalid-run.out 2>&1; then
+  echo "invalid app name was not blocked"
+  exit 1
+fi
+cat /tmp/suvos-invalid-run.out
+echo "SUVOS_AUTOTEST_PASS"

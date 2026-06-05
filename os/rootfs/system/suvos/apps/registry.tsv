@@ -1,0 +1,5 @@
+# name	path	permission	description_en	description_ru
+hello	/system/suvos/apps/hello.sh	app.hello	allowlisted shell demo	демо shell-приложение из registry
+cpp-hello	/system/suvos/bin/cpp-hello	app.cpp-hello	statically linked C++ demo	статически собранное C++ демо
+py-hello	/system/suvos/apps/py-hello.py	app.py-hello	Python demo	Python демо
+node-hello	/system/suvos/apps/node-hello.js	app.node-hello	Node.js demo	Node.js демо

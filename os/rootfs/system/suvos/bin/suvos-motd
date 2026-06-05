@@ -1,0 +1,10 @@
+#!/bin/sh
+
+. /system/suvos/lib/i18n.sh
+suvos_load_locale
+
+suvos_t motd.title
+suvos_t motd.kernel
+suvos_t motd.userspace
+echo
+suvos_t motd.help

@@ -1,0 +1,70 @@
+#!/bin/sh
+
+export PATH=/system/suvos/bin:/opt/suvos/bin:/bin:/sbin:/usr/bin:/usr/sbin
+
+. /system/suvos/lib/i18n.sh
+suvos_load_locale
+
+print_help() {
+  suvos_t shell.help
+}
+
+prompt() {
+  printf 'root@suvos:%s# ' "$PWD"
+}
+
+echo
+suvos_t shell.ready
+echo
+
+while true; do
+  prompt
+  IFS= read -r line || {
+    echo
+    continue
+  }
+
+  [ -n "$line" ] || continue
+
+  # First-stage shell: simple whitespace splitting is intentional for now.
+  set -- $line
+  cmd="$1"
+  shift || true
+
+  case "$cmd" in
+    help)
+      print_help
+      ;;
+    cd)
+      target="${1:-$HOME}"
+      if ! cd "$target" 2>/tmp/suvos-cd-error; then
+        printf 'cd: %s\n' "$(cat /tmp/suvos-cd-error)"
+      fi
+      ;;
+    roles)
+      suvos roles
+      ;;
+    run)
+      suvos run "$@"
+      ;;
+    exit|logout)
+      suvos_t shell.exit
+      ;;
+    poweroff|halt)
+      poweroff -f
+      ;;
+    reboot)
+      reboot -f
+      ;;
+    clear)
+      clear
+      ;;
+    *)
+      if command -v "$cmd" >/dev/null 2>&1; then
+        "$cmd" "$@"
+      else
+        suvos_t shell.not_found "$cmd"
+      fi
+      ;;
+  esac
+done

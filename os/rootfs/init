@@ -1,0 +1,54 @@
+#!/bin/sh
+export PATH=/system/suvos/bin:/opt/suvos/bin:/bin:/sbin:/usr/bin:/usr/sbin
+export HOME=/root
+export USER=root
+export SHELL=/system/suvos/bin/suvos-shell
+
+if [ -r /system/suvos/config/locale.conf ]; then
+  . /system/suvos/config/locale.conf
+  export SUVOS_LANG="${SUVOS_LANG:-ru}"
+fi
+
+mount -t proc proc /proc 2>/dev/null || true
+mount -t sysfs sysfs /sys 2>/dev/null || true
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+
+mkdir -p /dev /proc /sys /tmp /run /root
+
+exec </dev/console >/dev/console 2>&1
+
+/bin/busybox --install -s /bin 2>/dev/null || true
+
+make_system_readonly() {
+  mount -o bind /system/suvos /system/suvos 2>/tmp/suvos-ro.err || {
+    echo "[init] warning: cannot bind-mount /system/suvos read-only" >/dev/console
+    cat /tmp/suvos-ro.err >/dev/console 2>/dev/null || true
+    return 0
+  }
+
+  mount -o remount,ro,bind /system/suvos /system/suvos 2>/tmp/suvos-ro.err || \
+    mount -o remount,ro /system/suvos 2>/tmp/suvos-ro.err || {
+      echo "[init] warning: cannot remount /system/suvos read-only" >/dev/console
+      cat /tmp/suvos-ro.err >/dev/console 2>/dev/null || true
+      return 0
+    }
+}
+
+make_system_readonly
+
+clear 2>/dev/null || true
+suvos-motd 2>/dev/null || cat /etc/motd 2>/dev/null || true
+
+/system/suvos/bin/suvosd &
+
+for _ in 1 2 3; do
+  [ -p /run/suvosd/request ] && break
+  sleep 1
+done
+
+if grep -qw 'suvos.autotest=1' /proc/cmdline 2>/dev/null; then
+  /system/suvos/bin/suvos-autotest
+  poweroff -f
+fi
+
+exec /system/suvos/bin/suvos-shell

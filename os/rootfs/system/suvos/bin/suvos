@@ -1,0 +1,92 @@
+#!/bin/sh
+
+set -eu
+
+RUN="/run/suvosd"
+REQUEST="$RUN/request"
+RESPONSES="$RUN/responses"
+PIDFILE="$RUN/pid"
+TAB="$(printf '\t')"
+
+. /system/suvos/lib/i18n.sh
+suvos_load_locale
+
+usage() {
+  suvos_t cli.usage
+}
+
+daemon_available() {
+  [ -p "$REQUEST" ] || return 1
+  [ -r "$PIDFILE" ] || return 1
+  pid="$(cat "$PIDFILE" 2>/dev/null || true)"
+  [ -n "$pid" ] || return 1
+  kill -0 "$pid" 2>/dev/null
+}
+
+validate_part() {
+  printf '%s' "$1" | grep -q '[[:cntrl:]]' && return 1
+  return 0
+}
+
+send_request() {
+  daemon_available || {
+    suvos_t cli.daemon_down >&2
+    return 1
+  }
+
+  request_id="req-$$-$(date +%s)"
+  response="$RESPONSES/$request_id"
+  output="/tmp/suvos-response-$$"
+
+  rm -f "$response" "$output"
+  mkfifo "$response"
+  chmod 600 "$response"
+
+  trap 'rm -f "$response" "$output"' EXIT INT TERM
+
+  line="$request_id"
+  for part in "$@"; do
+    validate_part "$part" || {
+      suvos_t cli.bad_chars >&2
+      return 2
+    }
+    line="${line}${TAB}${part}"
+  done
+
+  printf '%s\n' "$line" >"$REQUEST"
+  cat "$response" >"$output"
+
+  status_line="$(tail -n 1 "$output" 2>/dev/null || true)"
+
+  case "$status_line" in
+    __SUVOSD_EXIT__:*)
+      sed '$d' "$output"
+      code="${status_line#__SUVOSD_EXIT__:}"
+      rm -f "$response" "$output"
+      trap - EXIT INT TERM
+      return "$code"
+      ;;
+    *)
+      cat "$output"
+      suvos_t cli.malformed >&2
+      rm -f "$response" "$output"
+      trap - EXIT INT TERM
+      return 1
+      ;;
+  esac
+}
+
+command="${1:-help}"
+case "$command" in
+  help|-h|--help)
+    usage
+    ;;
+  status|roles|role|list|run|ping)
+    send_request "$@"
+    ;;
+  *)
+    suvos_t cli.unknown "$command" >&2
+    usage >&2
+    exit 2
+    ;;
+esac
