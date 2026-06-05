@@ -12,6 +12,9 @@ SuvOS сейчас является минимальным x86_64 Linux-based п
 - статически собранный C++ daemon `suvosd` для привилегированных команд;
 - CLI `suvos`, который общается с `suvosd` через FIFO IPC;
 - внутренний Unix socket API в `/run/suvosd/control.sock` для будущего HTTP gateway;
+- диагностический socket client `suvosctl`;
+- localhost-only HTTP gateway `suvos-gateway` на `127.0.0.1:8080`;
+- первая web UI-страница, отдаваемая через `suvos-gateway`;
 - app manifests в `/system/suvos/apps/manifest.d/*.app`;
 - read-only системная зона `/system/suvos` после boot;
 - writable-зона `/data/suvos` для будущих данных и расширений;
@@ -26,7 +29,7 @@ SuvOS сейчас является минимальным x86_64 Linux-based п
 make
 ```
 
-Сборка скачивает x86_64 kernel и static BusyBox из Alpine `v3.22`, устанавливает Python/Node runtime-зависимости в initramfs rootfs, а также собирает C++ demo и `suvosd` через Docker/OrbStack.
+Сборка скачивает x86_64 kernel и static BusyBox из Alpine `v3.22`, устанавливает Python/Node runtime-зависимости в initramfs rootfs, а также собирает C++ demo, `suvosd`, `suvosctl` и `suvos-gateway` через Docker/OrbStack.
 
 Результаты:
 
@@ -90,6 +93,14 @@ suvos auth root <bootstrap-secret>
 suvos list
 suvos run hello
 suvos run cpp-hello
+suvosctl ping
+suvosctl status
+suvosctl list
+suvosctl run hello
+wget -q -O - http://127.0.0.1:8080/api/status
+wget -q -O - http://127.0.0.1:8080/api/apps
+wget -q -O - 'http://127.0.0.1:8080/api/run?name=hello'
+wget -q -O - http://127.0.0.1:8080/
 suvos run py-hello
 suvos run node-hello
 python3 --version
@@ -106,6 +117,9 @@ poweroff
   +-- /system/suvos/bin/suvosd
   |     +-- /run/suvosd/request
   |     +-- /run/suvosd/control.sock
+  +-- /system/suvos/bin/suvosctl
+  +-- /system/suvos/bin/suvos-gateway
+  |     +-- http://127.0.0.1:8080/api/*
   +-- /system/suvos/bin/suvos-shell
         +-- suvos CLI
               +-- /run/suvosd/request
@@ -114,6 +128,10 @@ poweroff
 
 `suvosd` не блокирует основной daemon loop: каждый request обрабатывается worker-процессом. Количество workers ограничено, app execution сейчас имеет timeout 30 секунд, timed-out apps убиваются по process group, output ограничен по размеру.
 
+`suvosctl` нужен для проверки внутреннего Unix socket API. Основной интерактивный CLI пока остается `suvos`, а будущий HTTP gateway должен обращаться к `/run/suvosd/control.sock` так же, как `suvosctl`.
+
+`suvos-gateway` - первый HTTP boundary для будущего web UI. Он слушает только `127.0.0.1:8080`, отдает `/system/suvos/ui`, возвращает JSON и проксирует команды в `suvosd` через Unix socket. Текущие endpoints: `/`, `/ui/app.js`, `/ui/styles.css`, `/health`, `/api/status`, `/api/roles`, `/api/apps`, `/api/run?name=<app>`.
+
 Файлы SuvOS лежат здесь:
 
 ```text
@@ -121,6 +139,7 @@ poweroff
   bin/
   apps/
     manifest.d/
+  ui/
   config/
   lib/
   security/

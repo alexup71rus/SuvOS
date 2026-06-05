@@ -25,7 +25,7 @@ python3 "$ROOT_DIR/tools/fetch_alpine_assets.py"
 
 chmod -R u+w "$ROOTFS" 2>/dev/null || true
 rm -rf "$ROOTFS"
-mkdir -p "$ROOTFS"/{bin,sbin,usr/bin,usr/sbin,dev,proc,sys,tmp,run,root,opt,data,system/suvos/bin,system/suvos/apps,system/suvos/config,system/suvos/lib,system/suvos/security,system/suvos/src/cpp}
+mkdir -p "$ROOTFS"/{bin,sbin,usr/bin,usr/sbin,dev,proc,sys,tmp,run,root,opt,data,system/suvos/bin,system/suvos/apps,system/suvos/config,system/suvos/lib,system/suvos/security,system/suvos/src/cpp,system/suvos/ui}
 
 tar -C "$ROOT_DIR/os/rootfs" -cf - . | tar -C "$ROOTFS" -xf -
 rm -rf "$ROOTFS/opt/suvos"
@@ -52,15 +52,22 @@ chmod +x "$ROOTFS/bin/busybox"
 for applet in sh ash ls mkdir rmdir pwd cat echo printf touch rm cp mv chmod chown \
   grep sed awk head tail find date clear mount umount dmesg sleep uname reboot \
   poweroff halt id whoami env true false test '[' basename dirname ps kill sync \
-  mkfifo cut tail sort; do
+  mkfifo cut tail sort ifconfig wget; do
   ln -sf busybox "$ROOTFS/bin/$applet"
 done
 
 "$ROOT_DIR/scripts/build-cpp-demo.sh"
 "$ROOT_DIR/scripts/build-suvosd.sh"
+"$ROOT_DIR/scripts/build-suvosctl.sh"
+"$ROOT_DIR/scripts/build-suvos-gateway.sh"
 cp "$ROOT_DIR/build/cpp/cpp-hello" "$ROOTFS/system/suvos/bin/cpp-hello"
 cp "$ROOT_DIR/build/suvosd/suvosd" "$ROOTFS/system/suvos/bin/suvosd"
-chmod +x "$ROOTFS/system/suvos/bin/cpp-hello" "$ROOTFS/system/suvos/bin/suvosd"
+cp "$ROOT_DIR/build/suvosctl/suvosctl" "$ROOTFS/system/suvos/bin/suvosctl"
+cp "$ROOT_DIR/build/suvos-gateway/suvos-gateway" "$ROOTFS/system/suvos/bin/suvos-gateway"
+chmod +x "$ROOTFS/system/suvos/bin/cpp-hello" \
+  "$ROOTFS/system/suvos/bin/suvosd" \
+  "$ROOTFS/system/suvos/bin/suvosctl" \
+  "$ROOTFS/system/suvos/bin/suvos-gateway"
 cp "$ROOT_DIR/src/cpp/hello.cpp" "$ROOTFS/system/suvos/src/cpp/hello.cpp"
 cp "$ROOT_BOOTSTRAP_HASH" "$ROOTFS/system/suvos/security/root-bootstrap.sha256"
 
@@ -76,6 +83,7 @@ chmod 0644 "$ROOTFS/system/suvos/config/build.conf" \
   "$ROOTFS/system/suvos/security/root-bootstrap.sha256" \
   "$ROOTFS/system/suvos/src/cpp/hello.cpp"
 find "$ROOTFS/system/suvos/apps/manifest.d" -type f -exec chmod 0644 {} +
+find "$ROOTFS/system/suvos/ui" -type f -exec chmod 0644 {} +
 find "$ROOTFS/system/suvos" -type d -exec chmod 0555 {} +
 find "$ROOTFS/system/suvos" -type f -exec chmod a-w {} +
 

@@ -260,6 +260,9 @@ suvos status
 - есть фоновый `suvosd`, собранный как статический x86_64 C++ binary;
 - `suvos` CLI общается с `suvosd` через FIFO IPC в `/run/suvosd`;
 - внутренний control API доступен как Unix socket `/run/suvosd/control.sock`;
+- `suvosctl` проверяет Unix socket API и служит диагностическим клиентом для будущего HTTP gateway;
+- `suvos-gateway` слушает `127.0.0.1:8080` и проксирует HTTP JSON API в `/run/suvosd/control.sock`;
+- первая web UI лежит в `/system/suvos/ui` и открывается через `http://127.0.0.1:8080/`;
 - `suvosd` выполняет `status`, `roles`, `list`, `run`;
 - `suvosd run` запускает только приложения из `/system/suvos/apps/manifest.d/*.app`, а имена с `/` и `..` блокируются;
 - каждый request обрабатывается отдельным worker-процессом, чтобы зависший app не останавливал основной daemon loop;
@@ -396,17 +399,15 @@ Linux kernel - GPL. Chromium, Node.js, Python и остальные пакеты
 
 ## Что делать дальше
 
-Текущий прототип уже загружается в QEMU, имеет SuvOS shell, `suvosd`, app manifests, read-only `/system/suvos`, writable `/data/suvos`, Unix socket control API, Python/Node/C++ demos, локализацию и bootstrap role auth.
+Текущий прототип уже загружается в QEMU, имеет SuvOS shell, `suvosd`, app manifests, read-only `/system/suvos`, writable `/data/suvos`, Unix socket control API, localhost HTTP gateway, первую web UI, Python/Node/C++ demos, локализацию и bootstrap role auth.
 
 Ближайший практичный план теперь другой:
 
-1. Добавить отдельный localhost-only HTTP gateway поверх `/run/suvosd/control.sock`.
-2. Сделать первый web UI без Chromium-kiosk: статичная страница настроек, которая показывает status/roles/list и запускает allowlisted demo-app через gateway.
-3. Добавить prototype extension manifest: UI page + commands + requested capabilities.
-4. Ввести подпись или хотя бы hash для system manifests перед тем, как разрешать установку расширений в `/data/suvos`.
-5. Только после этого переходить к графическому стеку: Wayland/Cage/Chromium kiosk.
+1. Добавить prototype extension manifest: UI page + commands + requested capabilities.
+2. Ввести подпись или хотя бы hash для system manifests перед тем, как разрешать установку расширений в `/data/suvos`.
+3. Только после этого переходить к графическому стеку: Wayland/Cage/Chromium kiosk.
 
-Следующий шаг после этого этапа - HTTP gateway и первый web UI. Control plane уже получил manifest registry, writable data boundary и Unix socket API, поэтому web слой можно строить поверх более четкой границы.
+Следующий шаг после этого этапа - extension manifest для UI-модулей или ручной запуск страницы через будущий графический браузер. Control plane уже получил manifest registry, writable data boundary, Unix socket API, localhost-only HTTP gateway и первую web UI.
 
 ## Локальные QEMU-скрипты
 

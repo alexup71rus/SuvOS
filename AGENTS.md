@@ -26,7 +26,10 @@ Use Russian for user-facing explanations unless the user asks otherwise. Code id
 - Keep `/opt/suvos` as a compatibility symlink only.
 - `suvosd` is the privileged control plane and should stay compiled C++.
 - `suvos` CLI and future UI must talk to `suvosd`; they must not launch arbitrary system paths directly.
-- Prefer the Unix socket `/run/suvosd/control.sock` as the internal API boundary. Add localhost HTTP only as a separate gateway process above it.
+- Prefer the Unix socket `/run/suvosd/control.sock` as the internal API boundary. Keep localhost HTTP in the separate `suvos-gateway` process above it.
+- Keep `suvosctl` as the diagnostic client for `/run/suvosd/control.sock`; update autotest when the socket protocol changes.
+- `suvos-gateway` must bind to `127.0.0.1` only unless the user explicitly approves a different exposure model.
+- Keep the first web UI under `/system/suvos/ui` and serve it through `suvos-gateway`; UI code must use the HTTP API instead of bypassing the gateway.
 - Root/bootstrap auth must keep the secret outside the image; the image may contain only verification material such as a hash.
 - Apps must be declared in `/system/suvos/apps/manifest.d/*.app`.
 - Runtime files may be shell/Python/Node during prototyping, but privileged logic belongs in `suvosd` or another compiled system component.
@@ -40,7 +43,7 @@ Before handing off most functional changes, run the fast core boot test:
 make test
 ```
 
-This is equivalent to `make test-core`. It builds without Python/Node runtime packages, boots QEMU, verifies the system area is read-only, runs `suvosd`, checks roles/auth, and executes shell/C++ demo apps.
+This is equivalent to `make test-core`. It builds without Python/Node runtime packages, boots QEMU, verifies the system area is read-only, runs `suvosd`, checks roles/auth, verifies `suvosctl` socket calls, verifies localhost HTTP gateway/UI calls, and executes shell/C++ demo apps.
 
 Run the full runtime test when touching Python/Node apps, runtime packaging, manifests for runtime apps, or release-like validation:
 

@@ -21,12 +21,13 @@ suvos_t() {
   whoami               Показать runtime-роль SuvOS
   auth                 Управление bootstrap-auth
   suvos <command>      Выполнить управляющую команду SuvOS
+  suvosctl <command>   Выполнить команду через Unix socket API
   run <name> [args]    Запустить разрешенное приложение через suvosd
   exit                 Вернуться в shell loop
   poweroff             Выключить VM
 
 Доступные BusyBox-команды:
-  ls mkdir rmdir pwd cat echo touch rm cp mv chmod grep sed awk head tail find
+  ls mkdir rmdir pwd cat echo touch rm cp mv chmod grep sed awk head tail find wget
 
 Опциональные runtime в full build:
   python3 node
@@ -69,12 +70,13 @@ Built-ins:
   whoami               Show the SuvOS runtime role
   auth                 Manage bootstrap auth
   suvos <command>      Run SuvOS control command
+  suvosctl <command>   Run a command through the Unix socket API
   run <name> [args]    Run an allowed SuvOS app through suvosd
   exit                 Return to the shell loop
   poweroff             Shut down the VM
 
 Common BusyBox commands available now:
-  ls mkdir rmdir pwd cat echo touch rm cp mv chmod grep sed awk head tail find
+  ls mkdir rmdir pwd cat echo touch rm cp mv chmod grep sed awk head tail find wget
 
 Optional runtimes in full build:
   python3 node

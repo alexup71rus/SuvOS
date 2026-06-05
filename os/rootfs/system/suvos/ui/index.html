@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SuvOS</title>
+    <link rel="stylesheet" href="/ui/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <div>
+          <h1>SuvOS</h1>
+          <p id="summary">control plane</p>
+        </div>
+        <button id="refresh" type="button">Обновить</button>
+      </header>
+
+      <section class="grid">
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Система</h2>
+            <span id="health" class="badge">...</span>
+          </div>
+          <pre id="status" class="output compact">Загрузка...</pre>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Роль</h2>
+            <span id="role-name" class="badge">...</span>
+          </div>
+          <pre id="roles" class="output compact">Загрузка...</pre>
+        </section>
+
+        <section class="panel apps">
+          <div class="panel-head">
+            <h2>Приложения</h2>
+            <span id="apps-count" class="badge">0</span>
+          </div>
+          <div id="apps" class="app-list"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>Вывод</h2>
+            <button id="clear-output" type="button">Очистить</button>
+          </div>
+          <pre id="command-output" class="output">...</pre>
+        </section>
+      </section>
+    </main>
+    <script src="/ui/app.js"></script>
+  </body>
+</html>

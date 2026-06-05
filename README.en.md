@@ -12,6 +12,9 @@ SuvOS is currently a minimal x86_64 Linux-based OS prototype:
 - statically linked C++ `suvosd` daemon for privileged commands;
 - `suvos` CLI client over FIFO IPC;
 - internal Unix socket API at `/run/suvosd/control.sock` for the future HTTP gateway;
+- diagnostic socket client `suvosctl`;
+- localhost-only HTTP gateway `suvos-gateway` on `127.0.0.1:8080`;
+- first web UI page served through `suvos-gateway`;
 - app manifests at `/system/suvos/apps/manifest.d/*.app`;
 - read-only `/system/suvos` system area at boot;
 - writable `/data/suvos` area for future data and extensions;
@@ -26,7 +29,7 @@ SuvOS is currently a minimal x86_64 Linux-based OS prototype:
 make
 ```
 
-The build downloads the x86_64 kernel and static BusyBox from Alpine `v3.22`, installs Python/Node runtime dependencies into the initramfs rootfs, and builds the C++ demo plus `suvosd` through Docker/OrbStack.
+The build downloads the x86_64 kernel and static BusyBox from Alpine `v3.22`, installs Python/Node runtime dependencies into the initramfs rootfs, and builds the C++ demo plus `suvosd`, `suvosctl`, and `suvos-gateway` through Docker/OrbStack.
 
 Outputs:
 
@@ -90,6 +93,14 @@ suvos auth root <bootstrap-secret>
 suvos list
 suvos run hello
 suvos run cpp-hello
+suvosctl ping
+suvosctl status
+suvosctl list
+suvosctl run hello
+wget -q -O - http://127.0.0.1:8080/api/status
+wget -q -O - http://127.0.0.1:8080/api/apps
+wget -q -O - 'http://127.0.0.1:8080/api/run?name=hello'
+wget -q -O - http://127.0.0.1:8080/
 suvos run py-hello
 suvos run node-hello
 python3 --version
@@ -106,6 +117,9 @@ This first filesystem is initramfs-only. Files created outside the read-only sys
   +-- /system/suvos/bin/suvosd
   |     +-- /run/suvosd/request
   |     +-- /run/suvosd/control.sock
+  +-- /system/suvos/bin/suvosctl
+  +-- /system/suvos/bin/suvos-gateway
+  |     +-- http://127.0.0.1:8080/api/*
   +-- /system/suvos/bin/suvos-shell
         +-- suvos CLI
               +-- /run/suvosd/request
@@ -114,6 +128,10 @@ This first filesystem is initramfs-only. Files created outside the read-only sys
 
 `suvosd` keeps the main daemon loop free by forking a worker for each request. Worker fan-out is capped, app execution currently has a 30 second timeout, timed-out apps are killed by process group, and app output is capped.
 
+`suvosctl` is a diagnostic client for the internal Unix socket API. The main interactive CLI remains `suvos`; the future HTTP gateway should call `/run/suvosd/control.sock` the same way `suvosctl` does.
+
+`suvos-gateway` is the first HTTP boundary for the future web UI. It listens only on `127.0.0.1:8080`, serves `/system/suvos/ui`, returns JSON, and proxies commands into `suvosd` through the Unix socket. Current endpoints: `/`, `/ui/app.js`, `/ui/styles.css`, `/health`, `/api/status`, `/api/roles`, `/api/apps`, `/api/run?name=<app>`.
+
 SuvOS-owned files live under:
 
 ```text
@@ -121,6 +139,7 @@ SuvOS-owned files live under:
   bin/
   apps/
     manifest.d/
+  ui/
   config/
   lib/
   security/

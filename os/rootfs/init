@@ -61,6 +61,14 @@ for _ in 1 2 3; do
   sleep 1
 done
 
+ifconfig lo 127.0.0.1 up 2>/tmp/suvos-lo.err || true
+/system/suvos/bin/suvos-gateway &
+
+for _ in 1 2 3 4 5; do
+  wget -q -O /tmp/suvos-gateway-health http://127.0.0.1:8080/health >/dev/null 2>&1 && break
+  sleep 1
+done
+
 if grep -qw 'suvos.autotest=1' /proc/cmdline 2>/dev/null; then
   /system/suvos/bin/suvos-autotest
   poweroff -f
