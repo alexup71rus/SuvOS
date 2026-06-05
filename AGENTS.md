@@ -15,6 +15,7 @@ Use Russian for user-facing explanations unless the user asks otherwise. Code id
 - Do not remove generated boot artifacts unless the user asks or they are clearly temporary cache/log/rootfs output.
 - Do not commit `build/` artifacts.
 - Keep Alpine package caches out of git; `build/cache`, `build/kernel`, and `build/assets` are generated.
+- Keep rootfs package layer caches out of git; `build/cache/rootfs-layers` and `build/cache/apk` are generated. Use `SUVOS_REFRESH_LAYER_CACHE=1` to rebuild them and `make clean-layer-cache` to remove them.
 - Do not print, paste, commit, or move `build/secrets/root-bootstrap.secret` into the image.
 - If root/bootstrap auth is discussed, refer to the secret path instead of revealing its value unless the user explicitly asks to inspect it.
 - Do not weaken the `/system/suvos` read-only boot behavior without calling it out explicitly.
@@ -33,6 +34,7 @@ Use Russian for user-facing explanations unless the user asks otherwise. Code id
 - Keep the first web UI under `/system/suvos/ui` and serve it through `suvos-gateway`; UI code must use the HTTP API instead of bypassing the gateway.
 - Keep browser-facing read endpoints structured JSON; avoid parsing localized CLI text in UI code.
 - Keep UI source under `src/ui`; copy only built `build/ui` artifacts into the initramfs image.
+- Build/check the frontend bundle through `make ui` and `npm run ui:check`; initramfs assembly should only verify and copy `build/ui`, not rebuild UI sources directly.
 - Keep `suvos-splash` framebuffer-only as the current graphics smoke baseline.
 - When moving to the browser shell stage, follow `SuvOS_CONCEPT.md`: Wayland runtime + Cage + ordinary Chromium, not `--kiosk`/`--app`, unless the user explicitly changes the browser-shell requirement.
 - Store the Chromium profile under `/data/suvos/chromium`; do not put browser user state in `/system/suvos`.

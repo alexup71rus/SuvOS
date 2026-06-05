@@ -77,13 +77,14 @@ done
 "$ROOT_DIR/scripts/build-suvosctl.sh"
 "$ROOT_DIR/scripts/build-suvos-gateway.sh"
 "$ROOT_DIR/scripts/build-suvos-splash.sh"
-"$ROOT_DIR/scripts/build-ui.sh"
+"$ROOT_DIR/scripts/build-ui.sh" --check
 cp "$ROOT_DIR/build/cpp/cpp-hello" "$ROOTFS/system/suvos/bin/cpp-hello"
 cp "$ROOT_DIR/build/suvosd/suvosd" "$ROOTFS/system/suvos/bin/suvosd"
 cp "$ROOT_DIR/build/suvosctl/suvosctl" "$ROOTFS/system/suvos/bin/suvosctl"
 cp "$ROOT_DIR/build/suvos-gateway/suvos-gateway" "$ROOTFS/system/suvos/bin/suvos-gateway"
 cp "$ROOT_DIR/build/suvos-splash/suvos-splash" "$ROOTFS/system/suvos/bin/suvos-splash"
 cp -R "$ROOT_DIR/build/ui/." "$ROOTFS/system/suvos/ui/"
+rm -f "$ROOTFS/system/suvos/ui/.suvos-ui-bundle.sha256"
 cp -R "$ROOT_DIR/build/kernel/graphics-modules" "$ROOTFS/system/suvos/modules/graphics"
 cp "$ROOT_DIR/build/kernel/graphics-modules.order" "$ROOTFS/system/suvos/modules/graphics.order"
 chmod +x "$ROOTFS/system/suvos/bin/cpp-hello" \

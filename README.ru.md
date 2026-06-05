@@ -40,6 +40,25 @@ Alpine assets кэшируются в `build/cache`, `build/kernel` и `build/as
 SUVOS_REFRESH_ASSETS=1 make assets
 ```
 
+Alpine runtime/GUI rootfs-слои тоже кэшируются. Первый `make`, `make test-full` или `make run-gui` собирает tar-слой в `build/cache/rootfs-layers` и APK download cache в `build/cache/apk`; следующие сборки с тем же Alpine image и тем же списком пакетов просто распаковывают готовый слой без длинного списка `Installing ...`.
+
+Управление layer cache:
+
+```sh
+SUVOS_REFRESH_LAYER_CACHE=1 make run-gui
+SUVOS_DISABLE_LAYER_CACHE=1 make run-gui
+make clean-layer-cache
+```
+
+`make clean` layer cache не удаляет. `make clean-layer-cache` удаляет только Alpine package/rootfs layer cache. `make distclean` удаляет весь `build/`.
+
+UI bundle тоже кэшируется в `build/ui` по hash исходников `src/ui/system-settings`, `tsconfig.ui.json`, `package.json`, `package-lock.json` и `tools/build-ui.mjs`. Сборка initramfs только проверяет готовый bundle и копирует его в образ; сам bundle создается отдельно через `make ui`.
+
+```sh
+make ui
+SUVOS_REFRESH_UI_BUNDLE=1 make ui
+```
+
 Результаты:
 
 ```text
@@ -78,6 +97,7 @@ make ui
 ```
 
 UI-исходники лежат в `src/ui/system-settings`. В initramfs копируется только собранный dist из `build/ui`: `index.html`, `styles.css`, `app.js`.
+Если исходники UI не менялись, `make ui` выводит `ui bundle cache hit: build/ui` и не запускает TypeScript build повторно.
 
 Ручной запуск в окне QEMU:
 
@@ -96,7 +116,7 @@ make run-core-graphics
 make run-gui
 ```
 
-`make run-gui` собирает отдельный GUI-профиль с `SUVOS_WITH_GUI=1`, устанавливает Alpine-пакеты `cage`, `chromium`, `xwayland`, `dbus`, `seatd`, `eudev`, fonts, cursor theme, ALSA diagnostics и Mesa/Wayland-зависимости, затем грузит QEMU с `suvos.graphics=1 suvos.gui=1`. Это тяжелый профиль: Chromium скачивается и попадает в initramfs, поэтому он не используется в `make test`. QEMU GUI-профиль по умолчанию использует USB HID keyboard/tablet/mouse через `qemu-xhci`, CoreAudio + virtio-sound для звука и запускает Cage с `-d`, чтобы по возможности убрать client-side window controls. `eudev` нужен не как desktop environment, а как device discovery слой для libinput/wlroots; без него kernel может видеть `/dev/input/event*`, но Cage не получает мышь.
+`make run-gui` собирает отдельный GUI-профиль с `SUVOS_WITH_GUI=1`, устанавливает Alpine-пакеты `cage`, `chromium`, `xwayland`, `dbus`, `seatd`, `eudev`, fonts, cursor theme, ALSA diagnostics и Mesa/Wayland-зависимости, затем грузит QEMU с `suvos.graphics=1 suvos.gui=1`. Это тяжелый профиль: Chromium скачивается и попадает в initramfs, поэтому он не используется в `make test`. После первого успешного build GUI-пакеты берутся из rootfs layer cache, пока не изменится список пакетов или Alpine image. QEMU GUI-профиль по умолчанию использует USB HID keyboard/tablet/mouse через `qemu-xhci`, CoreAudio + virtio-sound для звука и запускает Cage с `-d`, чтобы по возможности убрать client-side window controls. `eudev` нужен не как desktop environment, а как device discovery слой для libinput/wlroots; без него kernel может видеть `/dev/input/event*`, но Cage не получает мышь.
 
 Cursor theme сейчас является заменяемой GUI-зависимостью, а не частью core-логики SuvOS. По умолчанию используется Alpine-пакет `adwaita-icon-theme`; заменить его можно так:
 

@@ -1,4 +1,4 @@
-.PHONY: all assets initramfs initramfs-core initramfs-gui cpp suvosd suvosctl suvos-gateway suvos-splash ui ui-check ui-fix run run-core run-graphics run-core-graphics run-gui test test-core test-full test-gui-smoke clean distclean
+.PHONY: all assets initramfs initramfs-core initramfs-gui cpp suvosd suvosctl suvos-gateway suvos-splash ui ui-check ui-fix run run-core run-graphics run-core-graphics run-gui test test-core test-full test-gui-smoke clean clean-layer-cache distclean
 
 SUVOS_GUI_WIDTH ?= 1280
 SUVOS_GUI_HEIGHT ?= 800
@@ -35,13 +35,13 @@ ui-check:
 ui-fix:
 	npm run ui:fix
 
-initramfs:
+initramfs: ui
 	scripts/build-initramfs.sh
 
-initramfs-core:
+initramfs-core: ui
 	SUVOS_WITH_RUNTIMES=0 scripts/build-initramfs.sh
 
-initramfs-gui:
+initramfs-gui: ui
 	SUVOS_WITH_RUNTIMES=1 SUVOS_WITH_GUI=1 scripts/build-initramfs.sh
 
 run: all
@@ -73,6 +73,9 @@ test-gui-smoke: initramfs-gui
 clean:
 	chmod -R u+w build/rootfs 2>/dev/null || true
 	rm -rf build/rootfs build/initramfs build/cpp build/suvosd build/suvosctl build/suvos-gateway build/suvos-splash build/ui build/test-boot*.log build/test-gui-smoke.log build/run-gui-smoke.log
+
+clean-layer-cache:
+	rm -rf build/cache/rootfs-layers build/cache/apk
 
 distclean:
 	chmod -R u+w build/rootfs 2>/dev/null || true

@@ -40,6 +40,25 @@ Alpine assets are cached in `build/cache`, `build/kernel`, and `build/assets`. I
 SUVOS_REFRESH_ASSETS=1 make assets
 ```
 
+Alpine runtime/GUI rootfs layers are cached too. The first `make`, `make test-full`, or `make run-gui` creates a tar layer under `build/cache/rootfs-layers` and an APK download cache under `build/cache/apk`; later builds with the same Alpine image and package list just extract the cached layer without the long `Installing ...` package list.
+
+Layer cache controls:
+
+```sh
+SUVOS_REFRESH_LAYER_CACHE=1 make run-gui
+SUVOS_DISABLE_LAYER_CACHE=1 make run-gui
+make clean-layer-cache
+```
+
+`make clean` keeps the layer cache. `make clean-layer-cache` removes only the Alpine package/rootfs layer cache. `make distclean` removes the whole `build/` directory.
+
+The UI bundle is cached in `build/ui` by hashing `src/ui/system-settings`, `tsconfig.ui.json`, `package.json`, `package-lock.json`, and `tools/build-ui.mjs`. The initramfs build only checks the ready bundle and copies it into the image; the bundle itself is created separately through `make ui`.
+
+```sh
+make ui
+SUVOS_REFRESH_UI_BUNDLE=1 make ui
+```
+
 Outputs:
 
 ```text
@@ -78,6 +97,7 @@ make ui
 ```
 
 UI sources live in `src/ui/system-settings`. The initramfs only receives the built dist from `build/ui`: `index.html`, `styles.css`, `app.js`.
+If UI sources did not change, `make ui` prints `ui bundle cache hit: build/ui` and skips the TypeScript build.
 
 Manual run in a QEMU window:
 
@@ -96,7 +116,7 @@ Experimental Chromium shell run:
 make run-gui
 ```
 
-`make run-gui` builds a separate GUI profile with `SUVOS_WITH_GUI=1`, installs Alpine packages for `cage`, `chromium`, `xwayland`, `dbus`, `seatd`, `eudev`, fonts, a cursor theme, ALSA diagnostics, and Mesa/Wayland dependencies, then boots QEMU with `suvos.graphics=1 suvos.gui=1`. This is a heavy profile: Chromium is downloaded and embedded into the initramfs, so it is not used by `make test`. The QEMU GUI profile uses USB HID keyboard/tablet/mouse through `qemu-xhci` by default, CoreAudio + virtio-sound for sound, and starts Cage with `-d` to remove client-side window controls where possible. `eudev` is not a desktop environment dependency; it is the device discovery layer libinput/wlroots needs. Without it, the kernel can expose `/dev/input/event*` while Cage still receives no mouse devices.
+`make run-gui` builds a separate GUI profile with `SUVOS_WITH_GUI=1`, installs Alpine packages for `cage`, `chromium`, `xwayland`, `dbus`, `seatd`, `eudev`, fonts, a cursor theme, ALSA diagnostics, and Mesa/Wayland dependencies, then boots QEMU with `suvos.graphics=1 suvos.gui=1`. This is a heavy profile: Chromium is downloaded and embedded into the initramfs, so it is not used by `make test`. After the first successful build, GUI packages are restored from the rootfs layer cache until the package list or Alpine image changes. The QEMU GUI profile uses USB HID keyboard/tablet/mouse through `qemu-xhci` by default, CoreAudio + virtio-sound for sound, and starts Cage with `-d` to remove client-side window controls where possible. `eudev` is not a desktop environment dependency; it is the device discovery layer libinput/wlroots needs. Without it, the kernel can expose `/dev/input/event*` while Cage still receives no mouse devices.
 
 The cursor theme is currently a replaceable GUI dependency, not part of SuvOS core logic. The default is Alpine's `adwaita-icon-theme`; it can be replaced like this:
 
