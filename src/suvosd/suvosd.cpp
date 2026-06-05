@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <dirent.h>
 #include <fcntl.h>
 #include <fstream>
 #include <iomanip>
@@ -13,8 +14,10 @@
 #include <limits.h>
 #include <sstream>
 #include <string>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/un.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <vector>
@@ -22,12 +25,15 @@
 namespace {
 
 constexpr const char *kSystemRoot = "/system/suvos";
-constexpr const char *kRegistryPath = "/system/suvos/apps/registry.tsv";
+constexpr const char *kDataRoot = "/data/suvos";
+constexpr const char *kManifestDir = "/system/suvos/apps/manifest.d";
+constexpr const char *kLegacyRegistryPath = "/system/suvos/apps/registry.tsv";
 constexpr const char *kRolesPath = "/system/suvos/security/roles.conf";
 constexpr const char *kDefaultRootHashPath = "/system/suvos/security/root-bootstrap.sha256";
 constexpr const char *kRunDir = "/run/suvosd";
 constexpr const char *kResponsesDir = "/run/suvosd/responses";
 constexpr const char *kRequestFifo = "/run/suvosd/request";
+constexpr const char *kControlSocket = "/run/suvosd/control.sock";
 constexpr const char *kPidFile = "/run/suvosd/pid";
 constexpr const char *kSessionRoleFile = "/run/suvosd/session.role";
 constexpr const char *kSessionAuthFile = "/run/suvosd/session.auth";
@@ -36,15 +42,22 @@ constexpr int kResponseOpenRetries = 200;
 constexpr int kResponseOpenSleepMicros = 10000;
 constexpr int kAppTimeoutSeconds = 30;
 constexpr size_t kMaxAppOutputBytes = 1024 * 1024;
+constexpr size_t kMaxRequestLineBytes = 8192;
+constexpr size_t kMaxRequestParts = 32;
+constexpr size_t kMaxRequestPartBytes = 2048;
 constexpr sig_atomic_t kMaxRequestWorkers = 16;
 
 volatile sig_atomic_t gActiveRequestWorkers = 0;
+volatile sig_atomic_t gActiveSocketWorkers = 0;
 
 struct App {
   std::string name;
   std::string path;
   std::string permission;
   std::string description;
+  std::string runtime;
+  std::string uiEntry;
+  std::string version;
 };
 
 struct CommandResult {
@@ -151,8 +164,13 @@ std::string tr(const std::string &key) {
   if (key == "status.daemon") return ru ? "SuvOS daemon: запущен (c++)" : "SuvOS daemon: running (c++)";
   if (key == "status.system_root") return ru ? "Системная зона" : "System root";
   if (key == "status.system_root_mode") return ru ? "Защита системной зоны" : "System root protection";
+  if (key == "status.data_root") return ru ? "Writable-зона" : "Writable data root";
+  if (key == "status.api_socket") return ru ? "API socket" : "API socket";
+  if (key == "status.manifests") return ru ? "App manifests" : "App manifests";
   if (key == "status.read_only") return ru ? "read-only" : "read-only";
   if (key == "status.writable") return ru ? "writable" : "writable";
+  if (key == "status.available") return ru ? "доступен" : "available";
+  if (key == "status.missing") return ru ? "отсутствует" : "missing";
   if (key == "status.rootfs") return ru ? "Root filesystem: initramfs" : "Root filesystem: initramfs";
   if (key == "status.kernel") return ru ? "Ядро" : "Kernel";
   if (key == "status.uptime") return ru ? "Uptime" : "Uptime";
@@ -184,6 +202,9 @@ std::string tr(const std::string &key) {
   if (key == "permission.denied") return ru ? "suvosd run: недостаточно прав: " : "suvosd run: permission denied: ";
   if (key == "unknown") return ru ? "suvosd: неизвестная команда: " : "suvosd: unknown command: ";
   if (key == "missing_command") return ru ? "suvosd: команда не указана\n" : "suvosd: missing command\n";
+  if (key == "request.too_large") return ru ? "suvosd: request слишком большой\n" : "suvosd: request is too large\n";
+  if (key == "request.too_many_parts") return ru ? "suvosd: слишком много аргументов request\n" : "suvosd: too many request arguments\n";
+  if (key == "request.bad_chars") return ru ? "suvosd: request содержит управляющие символы\n" : "suvosd: request contains control characters\n";
   if (key == "too_many_workers") return ru ? "suvosd: слишком много активных request workers\n" : "suvosd: too many active request workers\n";
   if (key == "worker_fork_failed") return ru ? "suvosd: не удалось создать request worker\n" : "suvosd: failed to fork request worker\n";
 
@@ -210,6 +231,61 @@ bool validName(const std::string &value) {
   }
 
   return true;
+}
+
+bool hasControlChar(const std::string &value) {
+  for (char ch : value) {
+    if (std::iscntrl(static_cast<unsigned char>(ch))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool validCapability(const std::string &value) {
+  if (value.empty() || value.size() > 128 || hasControlChar(value)) {
+    return false;
+  }
+
+  for (char ch : value) {
+    const bool allowed = (ch >= 'A' && ch <= 'Z') ||
+                         (ch >= 'a' && ch <= 'z') ||
+                         (ch >= '0' && ch <= '9') ||
+                         ch == '_' || ch == '-' || ch == '.' || ch == ':' || ch == '*';
+    if (!allowed) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+CommandResult validateRequestParts(const std::vector<std::string> &parts) {
+  if (parts.empty()) {
+    return {2, tr("missing_command")};
+  }
+
+  if (parts.size() > kMaxRequestParts) {
+    return {2, tr("request.too_many_parts")};
+  }
+
+  for (const auto &part : parts) {
+    if (part.size() > kMaxRequestPartBytes || hasControlChar(part)) {
+      return {2, tr("request.bad_chars")};
+    }
+  }
+
+  return {0, ""};
+}
+
+bool pathIsSocket(const std::string &path) {
+  struct stat st {};
+  return stat(path.c_str(), &st) == 0 && S_ISSOCK(st.st_mode);
+}
+
+bool dirExists(const std::string &path) {
+  struct stat st {};
+  return stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
 }
 
 bool fileExistsExecutable(const std::string &path) {
@@ -514,6 +590,11 @@ std::string joinPermissions(const std::vector<std::string> &permissions) {
   return out.str();
 }
 
+bool hasSuffix(const std::string &value, const std::string &suffix) {
+  return value.size() >= suffix.size() &&
+         value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
 std::string currentRole(const RolePolicy &policy) {
   std::string role = trim(readFile(kSessionRoleFile));
   if (validName(role)) {
@@ -536,6 +617,12 @@ bool hasPermission(const RolePolicy &policy, const std::string &permission) {
     if (item == "*" || item == permission) {
       return true;
     }
+    if (hasSuffix(item, ".*")) {
+      const std::string prefix = item.substr(0, item.size() - 1);
+      if (permission.rfind(prefix, 0) == 0) {
+        return true;
+      }
+    }
   }
   return false;
 }
@@ -553,9 +640,121 @@ bool unlockRootSession(const RolePolicy &policy) {
          writeFile(kSessionAuthFile, policy.rootRole + "\n", 0600);
 }
 
-std::vector<App> loadRegistry() {
+std::vector<std::string> listManifestFiles() {
+  std::vector<std::string> files;
+  DIR *dir = opendir(kManifestDir);
+  if (dir == nullptr) {
+    return files;
+  }
+
+  while (dirent *entry = readdir(dir)) {
+    std::string name(entry->d_name);
+    if (name.empty() || name[0] == '.') {
+      continue;
+    }
+    if (!hasSuffix(name, ".app")) {
+      continue;
+    }
+    files.push_back(std::string(kManifestDir) + "/" + name);
+  }
+
+  closedir(dir);
+  std::sort(files.begin(), files.end());
+  return files;
+}
+
+bool loadAppManifest(const std::string &path, App *app) {
+  std::ifstream file(path);
+  if (!file) {
+    return false;
+  }
+
+  std::string descriptionEn;
+  std::string descriptionRu;
+  App parsed;
+  parsed.runtime = "native";
+
+  std::string line;
+  while (std::getline(file, line)) {
+    line = trim(line);
+    if (line.empty() || line[0] == '#') {
+      continue;
+    }
+
+    const size_t separator = line.find('=');
+    if (separator == std::string::npos) {
+      continue;
+    }
+
+    const std::string key = trim(line.substr(0, separator));
+    const std::string value = trim(line.substr(separator + 1));
+
+    if (key == "name") {
+      parsed.name = value;
+    } else if (key == "path") {
+      parsed.path = value;
+    } else if (key == "capability" || key == "permission") {
+      parsed.permission = value;
+    } else if (key == "runtime") {
+      parsed.runtime = value.empty() ? "native" : value;
+    } else if (key == "version") {
+      parsed.version = value;
+    } else if (key == "ui_entry") {
+      parsed.uiEntry = value;
+    } else if (key == "description.en") {
+      descriptionEn = value;
+    } else if (key == "description.ru") {
+      descriptionRu = value;
+    } else if (key == "description") {
+      descriptionEn = value;
+      descriptionRu = value;
+    }
+  }
+
+  parsed.description = isRu() && !descriptionRu.empty() ? descriptionRu : descriptionEn;
+  if (parsed.description.empty()) {
+    parsed.description = descriptionRu;
+  }
+
+  if (!validName(parsed.name) || !validCapability(parsed.permission)) {
+    return false;
+  }
+
+  if (!parsed.runtime.empty() && !validName(parsed.runtime)) {
+    return false;
+  }
+
+  if (!parsed.uiEntry.empty() &&
+      (parsed.uiEntry[0] == '/' || parsed.uiEntry.find("..") != std::string::npos ||
+       hasControlChar(parsed.uiEntry))) {
+    return false;
+  }
+
+  if (!normalizeAllowedAppPath(parsed.path, &parsed.path)) {
+    logConsole("skipping invalid app manifest path for " + parsed.name);
+    return false;
+  }
+
+  *app = parsed;
+  return true;
+}
+
+std::vector<App> loadManifestRegistry() {
   std::vector<App> apps;
-  std::ifstream file(kRegistryPath);
+  for (const auto &manifestPath : listManifestFiles()) {
+    App app;
+    if (loadAppManifest(manifestPath, &app)) {
+      apps.push_back(app);
+    } else {
+      logConsole("skipping invalid app manifest: " + manifestPath);
+    }
+  }
+  return apps;
+}
+
+std::vector<App> loadLegacyRegistry() {
+  std::vector<App> apps;
+  std::ifstream file(kLegacyRegistryPath);
 
   if (!file) {
     return apps;
@@ -595,6 +794,15 @@ std::vector<App> loadRegistry() {
   }
 
   return apps;
+}
+
+std::vector<App> loadRegistry() {
+  std::vector<App> apps = loadManifestRegistry();
+  if (!apps.empty()) {
+    return apps;
+  }
+
+  return loadLegacyRegistry();
 }
 
 const App *findApp(const std::vector<App> &apps, const std::string &name) {
@@ -748,6 +956,9 @@ CommandResult handleCommand(const std::vector<std::string> &parts) {
     out << tr("status.daemon") << "\n";
     out << tr("status.system_root") << ": " << kSystemRoot << "\n";
     out << tr("status.system_root_mode") << ": " << (systemRootReadOnly() ? tr("status.read_only") : tr("status.writable")) << "\n";
+    out << tr("status.data_root") << ": " << kDataRoot << " (" << (dirExists(kDataRoot) ? tr("status.writable") : tr("status.missing")) << ")\n";
+    out << tr("status.manifests") << ": " << kManifestDir << " (" << (dirExists(kManifestDir) ? tr("status.available") : tr("status.missing")) << ")\n";
+    out << tr("status.api_socket") << ": " << kControlSocket << " (" << (pathIsSocket(kControlSocket) ? tr("status.available") : tr("status.missing")) << ")\n";
     out << tr("status.rootfs") << "\n";
     out << tr("status.kernel") << ": " << readFile("/proc/version");
     std::string uptime = readFile("/proc/uptime");
@@ -936,6 +1147,160 @@ void writeResponse(const std::string &responsePath, const CommandResult &result)
   close(fd);
 }
 
+std::string encodeResponse(const CommandResult &result) {
+  std::string output = result.output;
+  if (!output.empty() && output.back() != '\n') {
+    output += "\n";
+  }
+  output += std::string(kExitPrefix) + std::to_string(result.code) + "\n";
+  return output;
+}
+
+CommandResult handleValidatedCommand(const std::vector<std::string> &parts) {
+  CommandResult validation = validateRequestParts(parts);
+  if (validation.code != 0) {
+    return validation;
+  }
+  return handleCommand(parts);
+}
+
+bool readSocketLine(int fd, std::string *line) {
+  line->clear();
+  char ch = '\0';
+
+  while (true) {
+    ssize_t n = read(fd, &ch, 1);
+    if (n == 0) {
+      return !line->empty();
+    }
+    if (n < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      return false;
+    }
+
+    if (ch == '\n') {
+      return true;
+    }
+
+    if (line->size() >= kMaxRequestLineBytes) {
+      return false;
+    }
+
+    line->push_back(ch);
+  }
+}
+
+void handleSocketClient(int fd) {
+  std::string line;
+  CommandResult result;
+
+  if (!readSocketLine(fd, &line)) {
+    result = {2, tr("request.too_large")};
+  } else {
+    auto parts = split(line, '\t');
+    result = handleValidatedCommand(parts);
+  }
+
+  const std::string response = encodeResponse(result);
+  (void)writeAll(fd, response);
+}
+
+void reapSocketClients() {
+  while (waitpid(-1, nullptr, WNOHANG) > 0) {
+    if (gActiveSocketWorkers > 0) {
+      --gActiveSocketWorkers;
+    }
+  }
+}
+
+void runSocketServer() {
+  signal(SIGCHLD, SIG_DFL);
+
+  int server = socket(AF_UNIX, SOCK_STREAM, 0);
+  if (server < 0) {
+    logConsole("failed to create control socket: " + std::string(strerror(errno)));
+    _exit(1);
+  }
+
+  sockaddr_un addr {};
+  addr.sun_family = AF_UNIX;
+  if (std::strlen(kControlSocket) >= sizeof(addr.sun_path)) {
+    logConsole("control socket path is too long");
+    close(server);
+    _exit(1);
+  }
+  std::strncpy(addr.sun_path, kControlSocket, sizeof(addr.sun_path) - 1);
+
+  unlink(kControlSocket);
+  if (bind(server, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0) {
+    logConsole("failed to bind control socket: " + std::string(strerror(errno)));
+    close(server);
+    _exit(1);
+  }
+
+  chmod(kControlSocket, 0600);
+
+  if (listen(server, 16) != 0) {
+    logConsole("failed to listen on control socket: " + std::string(strerror(errno)));
+    close(server);
+    _exit(1);
+  }
+
+  while (true) {
+    reapSocketClients();
+    int client = accept(server, nullptr, nullptr);
+    if (client < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      logConsole("failed to accept control socket client: " + std::string(strerror(errno)));
+      sleep(1);
+      continue;
+    }
+
+    reapSocketClients();
+    if (gActiveSocketWorkers >= kMaxRequestWorkers) {
+      const std::string response = encodeResponse({1, tr("too_many_workers")});
+      (void)writeAll(client, response);
+      close(client);
+      continue;
+    }
+
+    pid_t worker = fork();
+    if (worker < 0) {
+      logConsole("failed to fork control socket worker: " + std::string(strerror(errno)));
+      close(client);
+      continue;
+    }
+
+    if (worker == 0) {
+      close(server);
+      signal(SIGCHLD, SIG_DFL);
+      handleSocketClient(client);
+      close(client);
+      _exit(0);
+    }
+
+    ++gActiveSocketWorkers;
+    close(client);
+  }
+}
+
+void startSocketServer() {
+  pid_t pid = fork();
+  if (pid < 0) {
+    logConsole("failed to fork control socket server: " + std::string(strerror(errno)));
+    return;
+  }
+
+  if (pid == 0) {
+    runSocketServer();
+    _exit(0);
+  }
+}
+
 void handleRequestLine(const std::string &line) {
   auto fields = split(line, '\t');
   if (fields.size() < 2) {
@@ -953,6 +1318,11 @@ void handleRequestLine(const std::string &line) {
   struct stat responseStat {};
   if (stat(responsePath.c_str(), &responseStat) != 0 || !S_ISFIFO(responseStat.st_mode)) {
     logConsole("response fifo is missing: " + responsePath);
+    return;
+  }
+
+  if (line.size() > kMaxRequestLineBytes) {
+    writeResponse(responsePath, {2, tr("request.too_large")});
     return;
   }
 
@@ -984,7 +1354,7 @@ void handleRequestLine(const std::string &line) {
   sigprocmask(SIG_SETMASK, &oldSet, nullptr);
   signal(SIGCHLD, SIG_DFL);
   std::vector<std::string> commandParts(fields.begin() + 1, fields.end());
-  CommandResult result = handleCommand(commandParts);
+  CommandResult result = handleValidatedCommand(commandParts);
   writeResponse(responsePath, result);
   _exit(0);
 }
@@ -996,6 +1366,7 @@ void writePidFile() {
 
 void prepareRuntimeDir() {
   unlink(kRequestFifo);
+  unlink(kControlSocket);
   unlink(kPidFile);
   unlink(kSessionRoleFile);
   unlink(kSessionAuthFile);
@@ -1011,6 +1382,7 @@ void prepareRuntimeDir() {
   chmod(kRequestFifo, 0600);
   RolePolicy policy = loadRolePolicy();
   writeFile(kSessionRoleFile, policy.defaultRole + "\n", 0600);
+  startSocketServer();
   writePidFile();
 }
 

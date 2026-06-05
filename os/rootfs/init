@@ -13,11 +13,25 @@ mount -t proc proc /proc 2>/dev/null || true
 mount -t sysfs sysfs /sys 2>/dev/null || true
 mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
 
-mkdir -p /dev /proc /sys /tmp /run /root
+mkdir -p /dev /proc /sys /tmp /run /root /data
 
 exec </dev/console >/dev/console 2>&1
 
 /bin/busybox --install -s /bin 2>/dev/null || true
+
+prepare_data_root() {
+  mount -t tmpfs -o mode=0755,size=64m suvos-data /data 2>/tmp/suvos-data.err || true
+
+  mkdir -p /data/suvos
+  mkdir -p /data/suvos/apps
+  mkdir -p /data/suvos/extensions
+  mkdir -p /data/suvos/state
+  mkdir -p /data/suvos/logs
+  mkdir -p /data/suvos/tmp
+
+  chmod 0755 /data /data/suvos /data/suvos/apps /data/suvos/extensions /data/suvos/logs
+  chmod 0700 /data/suvos/state /data/suvos/tmp
+}
 
 make_system_readonly() {
   mount -o bind /system/suvos /system/suvos 2>/tmp/suvos-ro.err || {
@@ -34,6 +48,7 @@ make_system_readonly() {
     }
 }
 
+prepare_data_root
 make_system_readonly
 
 clear 2>/dev/null || true
@@ -42,7 +57,7 @@ suvos-motd 2>/dev/null || cat /etc/motd 2>/dev/null || true
 /system/suvos/bin/suvosd &
 
 for _ in 1 2 3; do
-  [ -p /run/suvosd/request ] && break
+  [ -p /run/suvosd/request ] && [ -S /run/suvosd/control.sock ] && break
   sleep 1
 done
 

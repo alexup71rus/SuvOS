@@ -2,7 +2,14 @@
 
 set -eu
 
+SUVOS_WITH_RUNTIMES=1
+SUVOS_BUILD_PROFILE=full
+if [ -r /system/suvos/config/build.conf ]; then
+  . /system/suvos/config/build.conf
+fi
+
 echo "SUVOS_AUTOTEST_BEGIN"
+echo "profile=$SUVOS_BUILD_PROFILE"
 echo "pwd=$(pwd)"
 suvos ping
 suvos status
@@ -10,6 +17,8 @@ suvos roles
 suvos whoami
 suvos auth status
 test -s /system/suvos/security/root-bootstrap.sha256
+test -d /system/suvos/apps/manifest.d
+test -S /run/suvosd/control.sock
 if suvos auth root wrong-bootstrap-secret >/tmp/suvos-auth-test.out 2>&1; then
   echo "invalid root bootstrap secret was accepted"
   exit 1
@@ -22,6 +31,9 @@ if touch /system/suvos/.rw-test >/tmp/suvos-ro-test.out 2>&1; then
   exit 1
 fi
 echo "SYSTEM_RO_PASS"
+echo "data-root-test" >/data/suvos/tmp/rw-test.txt
+cat /data/suvos/tmp/rw-test.txt
+echo "DATA_RW_PASS"
 mkdir -p /tmp/suvos-test
 cd /tmp/suvos-test
 echo "created-by-autotest" > sample.txt
@@ -29,10 +41,19 @@ ls -la
 cat sample.txt
 suvos run hello
 suvos run cpp-hello
-python3 --version
-node --version
-suvos run py-hello
-suvos run node-hello
+if [ "$SUVOS_WITH_RUNTIMES" = "1" ]; then
+  python3 --version
+  node --version
+  suvos run py-hello
+  suvos run node-hello
+else
+  if suvos run py-hello >/tmp/suvos-runtime-disabled.out 2>&1; then
+    echo "runtime app was available in core profile"
+    exit 1
+  fi
+  cat /tmp/suvos-runtime-disabled.out
+  echo "RUNTIME_TESTS_SKIPPED"
+fi
 if suvos run ../init >/tmp/suvos-invalid-run.out 2>&1; then
   echo "invalid app name was not blocked"
   exit 1

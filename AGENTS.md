@@ -2,7 +2,7 @@
 
 ## Project
 
-SuvOS is an x86_64 Linux-based OS prototype. The project currently owns the initramfs userspace, `/init`, `/system/suvos`, `suvosd`, app registry, localization, and QEMU boot/test flow. Alpine `v3.22` is an upstream package source, not the product identity.
+SuvOS is an x86_64 Linux-based OS prototype. The project currently owns the initramfs userspace, `/init`, `/system/suvos`, `/data/suvos`, `suvosd`, app manifests, localization, and QEMU boot/test flow. Alpine `v3.22` is an upstream package source, not the product identity.
 
 ## Default Language
 
@@ -17,32 +17,49 @@ Use Russian for user-facing explanations unless the user asks otherwise. Code id
 - Do not print, paste, commit, or move `build/secrets/root-bootstrap.secret` into the image.
 - If root/bootstrap auth is discussed, refer to the secret path instead of revealing its value unless the user explicitly asks to inspect it.
 - Do not weaken the `/system/suvos` read-only boot behavior without calling it out explicitly.
+- Do not make writable `/data/suvos` extensions trusted automatically; manifest validation and capabilities must remain explicit.
 
 ## Architecture Rules
 
 - Keep project-owned system files under `/system/suvos`.
+- Keep runtime/user-writable state under `/data/suvos`.
 - Keep `/opt/suvos` as a compatibility symlink only.
 - `suvosd` is the privileged control plane and should stay compiled C++.
 - `suvos` CLI and future UI must talk to `suvosd`; they must not launch arbitrary system paths directly.
+- Prefer the Unix socket `/run/suvosd/control.sock` as the internal API boundary. Add localhost HTTP only as a separate gateway process above it.
 - Root/bootstrap auth must keep the secret outside the image; the image may contain only verification material such as a hash.
-- Apps must be declared in `/system/suvos/apps/registry.tsv`.
+- Apps must be declared in `/system/suvos/apps/manifest.d/*.app`.
 - Runtime files may be shell/Python/Node during prototyping, but privileged logic belongs in `suvosd` or another compiled system component.
 - Keep localization wired through `SUVOS_LANG`; currently supported values are `ru` and `en`.
 
 ## Verification
 
-Before handing off functional changes, run:
+Before handing off most functional changes, run the fast core boot test:
 
 ```sh
 make test
 ```
 
-The test must boot QEMU, verify the system area is read-only, run `suvosd`, and execute shell/C++/Python/Node demo apps.
+This is equivalent to `make test-core`. It builds without Python/Node runtime packages, boots QEMU, verifies the system area is read-only, runs `suvosd`, checks roles/auth, and executes shell/C++ demo apps.
+
+Run the full runtime test when touching Python/Node apps, runtime packaging, manifests for runtime apps, or release-like validation:
+
+```sh
+make test-full
+```
+
+The full test installs Python/Node runtime packages into the initramfs and executes shell/C++/Python/Node demo apps.
 
 Useful manual run:
 
 ```sh
 make run
+```
+
+Fast manual run without Python/Node runtime packages:
+
+```sh
+make run-core
 ```
 
 ## Git

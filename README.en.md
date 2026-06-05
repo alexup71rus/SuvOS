@@ -11,8 +11,10 @@ SuvOS is currently a minimal x86_64 Linux-based OS prototype:
 - root bootstrap secret generated outside the image, with only its hash embedded;
 - statically linked C++ `suvosd` daemon for privileged commands;
 - `suvos` CLI client over FIFO IPC;
-- app registry at `/system/suvos/apps/registry.tsv`;
+- internal Unix socket API at `/run/suvosd/control.sock` for the future HTTP gateway;
+- app manifests at `/system/suvos/apps/manifest.d/*.app`;
 - read-only `/system/suvos` system area at boot;
+- writable `/data/suvos` area for future data and extensions;
 - shell-level localization for `ru` and `en`;
 - statically linked x86_64 C++ demo program;
 - Python 3 runtime;
@@ -39,7 +41,21 @@ build/initramfs/suvos-initramfs.cpio.gz
 make test
 ```
 
-This boots SuvOS in QEMU with `suvos.autotest=1`, runs basic commands, checks roles, verifies `/system/suvos` is read-only, runs shell/C++/Python/Node apps, and powers off.
+By default this is the fast core test. It builds the initramfs without Python/Node runtime packages, boots SuvOS in QEMU with `suvos.autotest=1`, runs basic commands, checks roles, verifies `/system/suvos` is read-only, runs the shell app and C++ app, and powers off.
+
+Full test:
+
+```sh
+make test-full
+```
+
+`make test-full` installs Python/Node runtime dependencies into the initramfs and additionally verifies `suvos run py-hello` plus `suvos run node-hello`.
+
+Fast manual run without Python/Node:
+
+```sh
+make run-core
+```
 
 The build creates an external bootstrap secret:
 
@@ -88,6 +104,8 @@ This first filesystem is initramfs-only. Files created outside the read-only sys
 ```text
 /init
   +-- /system/suvos/bin/suvosd
+  |     +-- /run/suvosd/request
+  |     +-- /run/suvosd/control.sock
   +-- /system/suvos/bin/suvos-shell
         +-- suvos CLI
               +-- /run/suvosd/request
@@ -102,17 +120,48 @@ SuvOS-owned files live under:
 /system/suvos/
   bin/
   apps/
+    manifest.d/
   config/
   lib/
   security/
   src/
+
+/data/suvos/
+  apps/
+  extensions/
+  logs/
+  state/
+  tmp/
 ```
 
 `/opt/suvos` is a compatibility symlink to `/system/suvos`.
 
+## App Manifests
+
+Applications are described with manifest files:
+
+```text
+/system/suvos/apps/manifest.d/hello.app
+```
+
+The format is currently simple `key=value`:
+
+```text
+name=hello
+version=0.1.0
+runtime=shell
+path=/system/suvos/apps/hello.sh
+capability=app.hello
+ui_entry=
+description.en=allowlisted shell demo
+description.ru=демо shell-приложение из manifest
+```
+
+`suvosd` only runs applications from the manifest registry, checks capabilities, and canonicalizes executable paths. TSV registry is no longer the primary format; the C++ daemon only keeps a legacy fallback.
+
 ## Roles and Bootstrap Secret
 
-The current boot starts SuvOS in the `setup` runtime role. This role can read status, list the app registry, run demo applications, and attempt `auth root`. The full `root` runtime role is unlocked with:
+The current boot starts SuvOS in the `setup` runtime role. This role can read status, list app manifests, run demo applications, and attempt `auth root`. The full `root` runtime role is unlocked with:
 
 ```sh
 suvos auth root <bootstrap-secret>
@@ -141,6 +190,6 @@ The current boot image defaults to Russian. Runtime apps and system messages are
 
 ## Alpine Boundary
 
-SuvOS currently uses Alpine `v3.22` as an upstream package source for the kernel, BusyBox, Python, Node.js, musl, and runtime libraries. The project-owned layer is `/init`, `/system/suvos`, `suvosd`, the app registry, localization, and the future UI/service model.
+SuvOS currently uses Alpine `v3.22` as an upstream package source for the kernel, BusyBox, Python, Node.js, musl, and runtime libraries. The project-owned layer is `/init`, `/system/suvos`, `/data/suvos`, `suvosd`, app manifests, localization, and the future UI/service model.
 
 This dependency is acceptable for the prototype. Later stages can replace it with Buildroot or another controlled build pipeline.

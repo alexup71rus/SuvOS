@@ -11,8 +11,10 @@ SuvOS сейчас является минимальным x86_64 Linux-based п
 - root bootstrap secret генерируется вне образа, а в образ попадает только hash;
 - статически собранный C++ daemon `suvosd` для привилегированных команд;
 - CLI `suvos`, который общается с `suvosd` через FIFO IPC;
-- app registry в `/system/suvos/apps/registry.tsv`;
+- внутренний Unix socket API в `/run/suvosd/control.sock` для будущего HTTP gateway;
+- app manifests в `/system/suvos/apps/manifest.d/*.app`;
 - read-only системная зона `/system/suvos` после boot;
+- writable-зона `/data/suvos` для будущих данных и расширений;
 - базовая локализация `ru` и `en`;
 - статически собранное x86_64 C++ demo-приложение;
 - runtime Python 3;
@@ -39,7 +41,21 @@ build/initramfs/suvos-initramfs.cpio.gz
 make test
 ```
 
-Команда загружает SuvOS в QEMU с `suvos.autotest=1`, проверяет базовые команды, роли, read-only защиту `/system/suvos`, запускает shell/C++/Python/Node apps и выключает VM.
+По умолчанию это быстрый core-тест. Он собирает initramfs без Python/Node runtime-пакетов, загружает SuvOS в QEMU с `suvos.autotest=1`, проверяет базовые команды, роли, read-only защиту `/system/suvos`, shell app и C++ app, затем выключает VM.
+
+Полный тест:
+
+```sh
+make test-full
+```
+
+`make test-full` устанавливает Python/Node runtime-зависимости в initramfs и дополнительно проверяет `suvos run py-hello` и `suvos run node-hello`.
+
+Быстрый ручной запуск без Python/Node:
+
+```sh
+make run-core
+```
 
 Сборка создает внешний bootstrap-secret:
 
@@ -88,6 +104,8 @@ poweroff
 ```text
 /init
   +-- /system/suvos/bin/suvosd
+  |     +-- /run/suvosd/request
+  |     +-- /run/suvosd/control.sock
   +-- /system/suvos/bin/suvos-shell
         +-- suvos CLI
               +-- /run/suvosd/request
@@ -102,17 +120,48 @@ poweroff
 /system/suvos/
   bin/
   apps/
+    manifest.d/
   config/
   lib/
   security/
   src/
+
+/data/suvos/
+  apps/
+  extensions/
+  logs/
+  state/
+  tmp/
 ```
 
 `/opt/suvos` является compatibility symlink на `/system/suvos`.
 
+## App Manifests
+
+Приложения описываются manifest-файлами:
+
+```text
+/system/suvos/apps/manifest.d/hello.app
+```
+
+Формат сейчас простой `key=value`:
+
+```text
+name=hello
+version=0.1.0
+runtime=shell
+path=/system/suvos/apps/hello.sh
+capability=app.hello
+ui_entry=
+description.en=allowlisted shell demo
+description.ru=демо shell-приложение из manifest
+```
+
+`suvosd` запускает только приложения из manifest registry, проверяет capability и канонизирует путь. TSV registry больше не является основным форматом; в коде оставлен только legacy fallback.
+
 ## Роли и Bootstrap-Secret
 
-Текущий boot запускает SuvOS в runtime-роли `setup`. Эта роль может читать статус, смотреть список app registry, выполнять demo-приложения и делать попытку `auth root`. Полная runtime-роль `root` разблокируется командой:
+Текущий boot запускает SuvOS в runtime-роли `setup`. Эта роль может читать статус, смотреть список app manifests, выполнять demo-приложения и делать попытку `auth root`. Полная runtime-роль `root` разблокируется командой:
 
 ```sh
 suvos auth root <bootstrap-secret>
@@ -141,6 +190,6 @@ SUVOS_LANG=en
 
 ## Граница Alpine
 
-SuvOS сейчас использует Alpine `v3.22` как upstream-источник kernel, BusyBox, Python, Node.js, musl и runtime-библиотек. Собственный слой проекта: `/init`, `/system/suvos`, `suvosd`, app registry, локализация и будущая UI/service-модель.
+SuvOS сейчас использует Alpine `v3.22` как upstream-источник kernel, BusyBox, Python, Node.js, musl и runtime-библиотек. Собственный слой проекта: `/init`, `/system/suvos`, `/data/suvos`, `suvosd`, app manifests, локализация и будущая UI/service-модель.
 
 Для прототипа такая зависимость нормальна. Позже ее можно заменить на Buildroot или другой контролируемый build pipeline.

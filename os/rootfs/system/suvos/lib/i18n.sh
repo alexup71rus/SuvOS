@@ -28,7 +28,7 @@ suvos_t() {
 Доступные BusyBox-команды:
   ls mkdir rmdir pwd cat echo touch rm cp mv chmod grep sed awk head tail find
 
-Языковые runtime:
+Опциональные runtime в full build:
   python3 node
 EOF
       ;;
@@ -76,7 +76,7 @@ Built-ins:
 Common BusyBox commands available now:
   ls mkdir rmdir pwd cat echo touch rm cp mv chmod grep sed awk head tail find
 
-Language runtimes:
+Optional runtimes in full build:
   python3 node
 EOF
       ;;
