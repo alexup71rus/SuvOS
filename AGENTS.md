@@ -14,6 +14,7 @@ Use Russian for user-facing explanations unless the user asks otherwise. Code id
 - Test through QEMU only.
 - Do not remove generated boot artifacts unless the user asks or they are clearly temporary cache/log/rootfs output.
 - Do not commit `build/` artifacts.
+- Keep Alpine package caches out of git; `build/cache`, `build/kernel`, and `build/assets` are generated.
 - Do not print, paste, commit, or move `build/secrets/root-bootstrap.secret` into the image.
 - If root/bootstrap auth is discussed, refer to the secret path instead of revealing its value unless the user explicitly asks to inspect it.
 - Do not weaken the `/system/suvos` read-only boot behavior without calling it out explicitly.
@@ -33,6 +34,7 @@ Use Russian for user-facing explanations unless the user asks otherwise. Code id
 - Keep browser-facing read endpoints structured JSON; avoid parsing localized CLI text in UI code.
 - Keep UI source under `src/ui`; copy only built `build/ui` artifacts into the initramfs image.
 - Keep `suvos-splash` framebuffer-only for now; do not add Wayland/Cage/Chromium until explicitly moving to the browser kiosk stage.
+- If graphics behavior changes, keep the boot resilient when `/dev/fb0` is unavailable and report diagnostics over serial.
 - Root/bootstrap auth must keep the secret outside the image; the image may contain only verification material such as a hash.
 - Apps must be declared in `/system/suvos/apps/manifest.d/*.app`.
 - Runtime files may be shell/Python/Node during prototyping, but privileged logic belongs in `suvosd` or another compiled system component.

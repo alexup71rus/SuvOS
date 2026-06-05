@@ -31,7 +31,13 @@ SuvOS сейчас является минимальным x86_64 Linux-based п
 make
 ```
 
-Сборка скачивает x86_64 kernel и static BusyBox из Alpine `v3.22`, устанавливает Python/Node runtime-зависимости в initramfs rootfs, а также собирает C++ demo, `suvosd`, `suvosctl` и `suvos-gateway` через Docker/OrbStack.
+Сборка получает x86_64 kernel, минимальные graphics modules и static BusyBox из Alpine `v3.22`, устанавливает Python/Node runtime-зависимости в initramfs rootfs, а также собирает C++ demo, `suvosd`, `suvosctl`, `suvos-splash` и `suvos-gateway` через Docker/OrbStack.
+
+Alpine assets кэшируются в `build/cache`, `build/kernel` и `build/assets`. Если outputs уже есть, сборка не ходит в сеть. Принудительно обновить upstream assets можно так:
+
+```sh
+SUVOS_REFRESH_ASSETS=1 make assets
+```
 
 Результаты:
 
@@ -79,7 +85,7 @@ make run-graphics
 make run-core-graphics
 ```
 
-На macOS текущий Homebrew QEMU открывает окно через `-display cocoa`; `make run-graphics` пока использует `std` VGA как самый совместимый ранний режим. В этом режиме init запускает `suvos-splash`, который пытается залить `/dev/fb0` сплошным цветом. Если framebuffer недоступен, boot продолжается через serial console. Полноценный браузерный kiosk UI появится позже, когда в образ будет добавлен Wayland/Chromium stack.
+На macOS текущий Homebrew QEMU открывает окно через `-display cocoa`; `make run-graphics` пока использует `std` VGA как самый совместимый ранний режим. В этом режиме init загружает минимальные DRM/framebuffer modules, затем запускает `suvos-splash`, который пытается залить `/dev/fb0` сплошным цветом. Если framebuffer недоступен, boot продолжается через serial console и пишет диагностику. Полноценный браузерный kiosk UI появится позже, когда в образ будет добавлен Wayland/Chromium stack.
 
 Сборка создает внешний bootstrap-secret:
 

@@ -16,6 +16,8 @@ suvos status
 suvos roles
 suvos whoami
 suvos auth status
+test -r /system/suvos/modules/graphics.order
+test -r /system/suvos/modules/graphics/kernel/drivers/gpu/drm/tiny/bochs.ko
 suvos-splash --check
 test -s /system/suvos/security/root-bootstrap.sha256
 test -d /system/suvos/apps/manifest.d

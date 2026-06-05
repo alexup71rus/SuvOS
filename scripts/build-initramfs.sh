@@ -25,7 +25,7 @@ python3 "$ROOT_DIR/tools/fetch_alpine_assets.py"
 
 chmod -R u+w "$ROOTFS" 2>/dev/null || true
 rm -rf "$ROOTFS"
-mkdir -p "$ROOTFS"/{bin,sbin,usr/bin,usr/sbin,dev,proc,sys,tmp,run,root,opt,data,system/suvos/bin,system/suvos/apps,system/suvos/config,system/suvos/lib,system/suvos/security,system/suvos/ui}
+mkdir -p "$ROOTFS"/{bin,sbin,usr/bin,usr/sbin,dev,proc,sys,tmp,run,root,opt,data,system/suvos/bin,system/suvos/apps,system/suvos/config,system/suvos/lib,system/suvos/modules,system/suvos/security,system/suvos/ui}
 
 tar -C "$ROOT_DIR/os/rootfs" -cf - . | tar -C "$ROOTFS" -xf -
 rm -rf "$ROOTFS/opt/suvos"
@@ -52,7 +52,7 @@ chmod +x "$ROOTFS/bin/busybox"
 for applet in sh ash ls mkdir rmdir pwd cat echo printf touch rm cp mv chmod chown \
   grep sed awk head tail find date clear mount umount dmesg sleep uname reboot \
   poweroff halt id whoami env true false test '[' basename dirname ps kill sync \
-  mkfifo cut tail sort ifconfig wget; do
+  mkfifo cut tail sort ifconfig wget insmod lsmod rmmod; do
   ln -sf busybox "$ROOTFS/bin/$applet"
 done
 
@@ -68,6 +68,8 @@ cp "$ROOT_DIR/build/suvosctl/suvosctl" "$ROOTFS/system/suvos/bin/suvosctl"
 cp "$ROOT_DIR/build/suvos-gateway/suvos-gateway" "$ROOTFS/system/suvos/bin/suvos-gateway"
 cp "$ROOT_DIR/build/suvos-splash/suvos-splash" "$ROOTFS/system/suvos/bin/suvos-splash"
 cp -R "$ROOT_DIR/build/ui/." "$ROOTFS/system/suvos/ui/"
+cp -R "$ROOT_DIR/build/kernel/graphics-modules" "$ROOTFS/system/suvos/modules/graphics"
+cp "$ROOT_DIR/build/kernel/graphics-modules.order" "$ROOTFS/system/suvos/modules/graphics.order"
 chmod +x "$ROOTFS/system/suvos/bin/cpp-hello" \
   "$ROOTFS/system/suvos/bin/suvosd" \
   "$ROOTFS/system/suvos/bin/suvosctl" \
@@ -86,6 +88,7 @@ chmod 0644 "$ROOTFS/system/suvos/config/build.conf" \
   "$ROOTFS/system/suvos/security/roles.conf" \
   "$ROOTFS/system/suvos/security/root-bootstrap.sha256"
 find "$ROOTFS/system/suvos/apps/manifest.d" -type f -exec chmod 0644 {} +
+find "$ROOTFS/system/suvos/modules" -type f -exec chmod 0644 {} +
 find "$ROOTFS/system/suvos/ui" -type f -exec chmod 0644 {} +
 find "$ROOTFS/system/suvos" -type d -exec chmod 0555 {} +
 find "$ROOTFS/system/suvos" -type f -exec chmod a-w {} +
