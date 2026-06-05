@@ -31,6 +31,7 @@ Use Russian for user-facing explanations unless the user asks otherwise. Code id
 - `suvos-gateway` must bind to `127.0.0.1` only unless the user explicitly approves a different exposure model.
 - Keep the first web UI under `/system/suvos/ui` and serve it through `suvos-gateway`; UI code must use the HTTP API instead of bypassing the gateway.
 - Keep browser-facing read endpoints structured JSON; avoid parsing localized CLI text in UI code.
+- Keep UI source under `src/ui`; copy only built `build/ui` artifacts into the initramfs image.
 - Root/bootstrap auth must keep the secret outside the image; the image may contain only verification material such as a hash.
 - Apps must be declared in `/system/suvos/apps/manifest.d/*.app`.
 - Runtime files may be shell/Python/Node during prototyping, but privileged logic belongs in `suvosd` or another compiled system component.
@@ -53,6 +54,14 @@ make test-full
 ```
 
 The full test installs Python/Node runtime packages into the initramfs and executes shell/C++/Python/Node demo apps.
+
+When touching UI source or frontend tooling, run:
+
+```sh
+npm run ui:check
+```
+
+Use `npm run ui:fix` before committing UI formatting/lint changes.
 
 Useful manual run:
 

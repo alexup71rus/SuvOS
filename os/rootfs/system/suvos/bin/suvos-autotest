@@ -27,9 +27,13 @@ wget -q -O /tmp/suvos-http-health.out http://127.0.0.1:8080/health
 cat /tmp/suvos-http-health.out
 grep -q '"ok":true' /tmp/suvos-http-health.out
 wget -q -O /tmp/suvos-ui-index.out http://127.0.0.1:8080/
-grep -q '<title>SuvOS</title>' /tmp/suvos-ui-index.out
+grep -q '<title>SuvOS Settings</title>' /tmp/suvos-ui-index.out
 wget -q -O /tmp/suvos-ui-js.out http://127.0.0.1:8080/ui/app.js
 grep -q '/api/status' /tmp/suvos-ui-js.out
+if find /system/suvos/ui -type f -name '*.ts' | grep -q .; then
+  echo "typescript UI sources are present in image"
+  exit 1
+fi
 wget -q -O /tmp/suvos-ui-css.out http://127.0.0.1:8080/ui/styles.css
 grep -q '.panel' /tmp/suvos-ui-css.out
 wget -q -O /tmp/suvos-http-status.out http://127.0.0.1:8080/api/status

@@ -61,6 +61,16 @@ Fast manual run without Python/Node:
 make run-core
 ```
 
+UI layer checks and build:
+
+```sh
+npm run ui:check
+npm run ui:fix
+make ui
+```
+
+UI sources live in `src/ui/system-settings`. The initramfs only receives the built dist from `build/ui`: `index.html`, `styles.css`, `app.js`.
+
 Manual run in a QEMU window:
 
 ```sh
@@ -147,7 +157,7 @@ This first filesystem is initramfs-only. Files created outside the read-only sys
 
 `suvosctl` is a diagnostic client for the internal Unix socket API. The main interactive CLI remains `suvos`; the future HTTP gateway should call `/run/suvosd/control.sock` the same way `suvosctl` does.
 
-`suvos-gateway` is the first HTTP boundary for the future web UI. It listens only on `127.0.0.1:8080`, serves `/system/suvos/ui`, returns JSON, and proxies commands into `suvosd` through the Unix socket. `/api/status`, `/api/roles`, and `/api/apps` return structured JSON objects for the UI; `/api/run?name=<app>` remains a command endpoint and returns `exitCode` plus `output`. Current endpoints: `/`, `/ui/app.js`, `/ui/styles.css`, `/health`, `/api/status`, `/api/roles`, `/api/apps`, `/api/run?name=<app>`.
+`suvos-gateway` is the first HTTP boundary for the future web UI. It listens only on `127.0.0.1:8080`, serves the built UI dist from `/system/suvos/ui`, returns JSON, and proxies commands into `suvosd` through the Unix socket. `/api/status`, `/api/roles`, and `/api/apps` return structured JSON objects for the UI; `/api/run?name=<app>` remains a command endpoint and returns `exitCode` plus `output`. Current endpoints: `/`, `/ui/app.js`, `/ui/styles.css`, `/health`, `/api/status`, `/api/roles`, `/api/apps`, `/api/run?name=<app>`.
 
 SuvOS-owned files live under:
 
@@ -160,7 +170,6 @@ SuvOS-owned files live under:
   config/
   lib/
   security/
-  src/
 
 /data/suvos/
   apps/

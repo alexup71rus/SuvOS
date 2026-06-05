@@ -1,0 +1,23 @@
+{
+  "name": "suvos",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "ui:build": "node tools/build-ui.mjs",
+    "ui:check": "npm run ui:typecheck && npm run ui:lint && npm run ui:format:check",
+    "ui:fix": "npm run ui:lint -- --fix && npm run ui:format",
+    "ui:format": "prettier --write \"src/ui/**/*.{ts,html,css}\" package.json tsconfig.ui.json eslint.config.mjs tools/build-ui.mjs",
+    "ui:format:check": "prettier --check \"src/ui/**/*.{ts,html,css}\" package.json tsconfig.ui.json eslint.config.mjs tools/build-ui.mjs",
+    "ui:lint": "eslint \"src/ui/**/*.ts\"",
+    "ui:typecheck": "tsc -p tsconfig.ui.json --noEmit"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.4.1",
+    "globals": "^17.6.0",
+    "prettier": "^3.8.3",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.60.1"
+  }
+}

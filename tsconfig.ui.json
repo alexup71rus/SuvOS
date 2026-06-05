@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "lib": ["DOM", "ES2020"],
+    "module": "ES2020",
+    "noEmitOnError": true,
+    "outDir": "build/ui",
+    "removeComments": true,
+    "rootDir": "src/ui/system-settings",
+    "strict": true,
+    "target": "ES2020"
+  },
+  "include": ["src/ui/system-settings/**/*.ts"]
+}

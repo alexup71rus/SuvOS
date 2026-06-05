@@ -1,4 +1,4 @@
-.PHONY: all assets initramfs initramfs-core cpp suvosd suvosctl suvos-gateway run run-core run-graphics run-core-graphics test test-core test-full clean distclean
+.PHONY: all assets initramfs initramfs-core cpp suvosd suvosctl suvos-gateway ui ui-check ui-fix run run-core run-graphics run-core-graphics test test-core test-full clean distclean
 
 all: initramfs
 
@@ -16,6 +16,15 @@ suvosctl:
 
 suvos-gateway:
 	scripts/build-suvos-gateway.sh
+
+ui:
+	scripts/build-ui.sh
+
+ui-check:
+	npm run ui:check
+
+ui-fix:
+	npm run ui:fix
 
 initramfs:
 	scripts/build-initramfs.sh
@@ -45,7 +54,7 @@ test-full: initramfs
 
 clean:
 	chmod -R u+w build/rootfs 2>/dev/null || true
-	rm -rf build/rootfs build/initramfs build/cpp build/suvosd build/suvosctl build/suvos-gateway build/test-boot*.log
+	rm -rf build/rootfs build/initramfs build/cpp build/suvosd build/suvosctl build/suvos-gateway build/ui build/test-boot*.log
 
 distclean:
 	chmod -R u+w build/rootfs 2>/dev/null || true

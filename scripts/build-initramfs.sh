@@ -25,7 +25,7 @@ python3 "$ROOT_DIR/tools/fetch_alpine_assets.py"
 
 chmod -R u+w "$ROOTFS" 2>/dev/null || true
 rm -rf "$ROOTFS"
-mkdir -p "$ROOTFS"/{bin,sbin,usr/bin,usr/sbin,dev,proc,sys,tmp,run,root,opt,data,system/suvos/bin,system/suvos/apps,system/suvos/config,system/suvos/lib,system/suvos/security,system/suvos/src/cpp,system/suvos/ui}
+mkdir -p "$ROOTFS"/{bin,sbin,usr/bin,usr/sbin,dev,proc,sys,tmp,run,root,opt,data,system/suvos/bin,system/suvos/apps,system/suvos/config,system/suvos/lib,system/suvos/security,system/suvos/ui}
 
 tar -C "$ROOT_DIR/os/rootfs" -cf - . | tar -C "$ROOTFS" -xf -
 rm -rf "$ROOTFS/opt/suvos"
@@ -60,15 +60,16 @@ done
 "$ROOT_DIR/scripts/build-suvosd.sh"
 "$ROOT_DIR/scripts/build-suvosctl.sh"
 "$ROOT_DIR/scripts/build-suvos-gateway.sh"
+"$ROOT_DIR/scripts/build-ui.sh"
 cp "$ROOT_DIR/build/cpp/cpp-hello" "$ROOTFS/system/suvos/bin/cpp-hello"
 cp "$ROOT_DIR/build/suvosd/suvosd" "$ROOTFS/system/suvos/bin/suvosd"
 cp "$ROOT_DIR/build/suvosctl/suvosctl" "$ROOTFS/system/suvos/bin/suvosctl"
 cp "$ROOT_DIR/build/suvos-gateway/suvos-gateway" "$ROOTFS/system/suvos/bin/suvos-gateway"
+cp -R "$ROOT_DIR/build/ui/." "$ROOTFS/system/suvos/ui/"
 chmod +x "$ROOTFS/system/suvos/bin/cpp-hello" \
   "$ROOTFS/system/suvos/bin/suvosd" \
   "$ROOTFS/system/suvos/bin/suvosctl" \
   "$ROOTFS/system/suvos/bin/suvos-gateway"
-cp "$ROOT_DIR/src/cpp/hello.cpp" "$ROOTFS/system/suvos/src/cpp/hello.cpp"
 cp "$ROOT_BOOTSTRAP_HASH" "$ROOTFS/system/suvos/security/root-bootstrap.sha256"
 
 chmod +x "$ROOTFS/init"
@@ -80,8 +81,7 @@ chmod 0644 "$ROOTFS/system/suvos/config/build.conf" \
   "$ROOTFS/system/suvos/config/locale.conf" \
   "$ROOTFS/system/suvos/lib/i18n.sh" \
   "$ROOTFS/system/suvos/security/roles.conf" \
-  "$ROOTFS/system/suvos/security/root-bootstrap.sha256" \
-  "$ROOTFS/system/suvos/src/cpp/hello.cpp"
+  "$ROOTFS/system/suvos/security/root-bootstrap.sha256"
 find "$ROOTFS/system/suvos/apps/manifest.d" -type f -exec chmod 0644 {} +
 find "$ROOTFS/system/suvos/ui" -type f -exec chmod 0644 {} +
 find "$ROOTFS/system/suvos" -type d -exec chmod 0555 {} +

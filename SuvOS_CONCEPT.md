@@ -311,7 +311,7 @@ node --version
 poweroff
 ```
 
-Важно: исходники не являются приложениями автоматически. Например, `/system/suvos/src/cpp/hello.cpp` лежит в образе для просмотра, но `run hello.cpp` не обязан работать. Запускается собранный allowlisted бинарник `cpp-hello`.
+Важно: исходники не являются приложениями автоматически и не должны попадать в системный образ без необходимости. Например, C++ demo запускается как собранный allowlisted бинарник `cpp-hello`, а frontend-исходники лежат вне rootfs в `src/ui` и попадают в образ только как собранный UI dist.
 
 ## Второй этап: системный демон
 
@@ -332,7 +332,7 @@ poweroff
 
 Когда CLI и `suvosd` работают, можно добавить локальный web UI:
 
-- UI лежит в `/system/suvos/ui`;
+- UI source лежит в `src/ui`, а в `/system/suvos/ui` попадает только собранный dist;
 - локальный сервер слушает только `127.0.0.1`;
 - UI вызывает только API gateway;
 - API gateway прокидывает команды в `suvosd`;
@@ -405,7 +405,7 @@ Linux kernel - GPL. Chromium, Node.js, Python и остальные пакеты
 
 ## Что делать дальше
 
-Текущий прототип уже загружается в QEMU, имеет SuvOS shell, `suvosd`, app manifests, read-only `/system/suvos`, writable `/data/suvos`, Unix socket control API, localhost HTTP gateway, первую web UI, structured JSON read API, Python/Node/C++ demos, локализацию и bootstrap role auth.
+Текущий прототип уже загружается в QEMU, имеет SuvOS shell, `suvosd`, app manifests, read-only `/system/suvos`, writable `/data/suvos`, Unix socket control API, localhost HTTP gateway, первую TypeScript web UI, structured JSON read API, Python/Node/C++ demos, локализацию и bootstrap role auth.
 
 Ближайший практичный план теперь другой:
 

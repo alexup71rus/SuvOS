@@ -61,6 +61,16 @@ make test-full
 make run-core
 ```
 
+Проверка и сборка UI-слоя:
+
+```sh
+npm run ui:check
+npm run ui:fix
+make ui
+```
+
+UI-исходники лежат в `src/ui/system-settings`. В initramfs копируется только собранный dist из `build/ui`: `index.html`, `styles.css`, `app.js`.
+
 Ручной запуск в окне QEMU:
 
 ```sh
@@ -147,7 +157,7 @@ poweroff
 
 `suvosctl` нужен для проверки внутреннего Unix socket API. Основной интерактивный CLI пока остается `suvos`, а будущий HTTP gateway должен обращаться к `/run/suvosd/control.sock` так же, как `suvosctl`.
 
-`suvos-gateway` - первый HTTP boundary для будущего web UI. Он слушает только `127.0.0.1:8080`, отдает `/system/suvos/ui`, возвращает JSON и проксирует команды в `suvosd` через Unix socket. `/api/status`, `/api/roles` и `/api/apps` возвращают структурированные JSON-объекты для UI; `/api/run?name=<app>` остается command endpoint и возвращает `exitCode` плюс `output`. Текущие endpoints: `/`, `/ui/app.js`, `/ui/styles.css`, `/health`, `/api/status`, `/api/roles`, `/api/apps`, `/api/run?name=<app>`.
+`suvos-gateway` - первый HTTP boundary для будущего web UI. Он слушает только `127.0.0.1:8080`, отдает собранный UI dist из `/system/suvos/ui`, возвращает JSON и проксирует команды в `suvosd` через Unix socket. `/api/status`, `/api/roles` и `/api/apps` возвращают структурированные JSON-объекты для UI; `/api/run?name=<app>` остается command endpoint и возвращает `exitCode` плюс `output`. Текущие endpoints: `/`, `/ui/app.js`, `/ui/styles.css`, `/health`, `/api/status`, `/api/roles`, `/api/apps`, `/api/run?name=<app>`.
 
 Файлы SuvOS лежат здесь:
 
@@ -160,7 +170,6 @@ poweroff
   config/
   lib/
   security/
-  src/
 
 /data/suvos/
   apps/

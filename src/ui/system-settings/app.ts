@@ -1,4 +1,66 @@
-const state = {
+type Language = "ru" | "en";
+
+interface ApiBaseResponse {
+  ok: boolean;
+}
+
+interface HealthResponse extends ApiBaseResponse {
+  service: string;
+}
+
+interface StatusResponse extends ApiBaseResponse {
+  apiSocket: string;
+  apiSocketAvailable: boolean;
+  daemon: string;
+  dataRoot: string;
+  dataRootAvailable: boolean;
+  kernel: string;
+  language: string;
+  manifestDir: string;
+  manifestDirAvailable: boolean;
+  rootfs: string;
+  status: string;
+  systemRoot: string;
+  systemRootReadOnly: boolean;
+  uptimeSeconds: number;
+}
+
+interface RolesResponse extends ApiBaseResponse {
+  currentRole: string;
+  defaultRole: string;
+  hasRootAccess: boolean;
+  permissions: string[];
+  rootHashConfigured: boolean;
+  rootRole: string;
+  rootSessionUnlocked: boolean;
+  userCreation: string;
+}
+
+interface AppManifest {
+  capability: string;
+  description: string;
+  name: string;
+  runtime: string;
+  uiEntry: string;
+  version: string;
+}
+
+interface AppsResponse extends ApiBaseResponse {
+  apps: AppManifest[];
+}
+
+interface RunResponse extends ApiBaseResponse {
+  exitCode: number;
+  output: string;
+}
+
+interface ErrorResponse {
+  error?: string;
+  ok?: boolean;
+  output?: string;
+}
+
+const state: { apps: AppManifest[] } = {
   apps: [],
 };
 
@@ -61,45 +123,55 @@ const labels = {
     locked: "locked",
     seconds: "seconds",
   },
-};
+} as const;
+
+type LabelKey = keyof (typeof labels)["ru"];
 
 const el = {
-  health: document.querySelector("#health"),
-  summary: document.querySelector("#summary"),
-  status: document.querySelector("#status"),
-  roles: document.querySelector("#roles"),
-  roleName: document.querySelector("#role-name"),
-  appsCount: document.querySelector("#apps-count"),
-  apps: document.querySelector("#apps"),
-  output: document.querySelector("#command-output"),
-  refresh: document.querySelector("#refresh"),
-  clearOutput: document.querySelector("#clear-output"),
+  apps: requiredElement<HTMLDivElement>("#apps"),
+  appsCount: requiredElement<HTMLSpanElement>("#apps-count"),
+  clearOutput: requiredElement<HTMLButtonElement>("#clear-output"),
+  health: requiredElement<HTMLSpanElement>("#health"),
+  output: requiredElement<HTMLPreElement>("#command-output"),
+  refresh: requiredElement<HTMLButtonElement>("#refresh"),
+  roleName: requiredElement<HTMLSpanElement>("#role-name"),
+  roles: requiredElement<HTMLPreElement>("#roles"),
+  status: requiredElement<HTMLPreElement>("#status"),
+  summary: requiredElement<HTMLParagraphElement>("#summary"),
 };
 
-async function api(path) {
+function requiredElement<T extends HTMLElement>(selector: string): T {
+  const element = document.querySelector<T>(selector);
+  if (element === null) {
+    throw new Error(`Missing UI element: ${selector}`);
+  }
+  return element;
+}
+
+async function api<T extends ApiBaseResponse>(path: string): Promise<T> {
   const response = await fetch(path, { cache: "no-store" });
-  const data = await response.json();
+  const data = (await response.json()) as T & ErrorResponse;
   if (!response.ok || data.ok === false) {
-    const message = data.output || data.error || `HTTP ${response.status}`;
+    const message = data.output ?? data.error ?? `HTTP ${response.status}`;
     throw new Error(message.trim());
   }
   return data;
 }
 
-function setOutput(text, isError = false) {
-  el.output.textContent = text || "";
+function setOutput(text: string, isError = false): void {
+  el.output.textContent = text;
   el.output.classList.toggle("error", isError);
 }
 
-function uiLanguage(value) {
+function uiLanguage(value: string): Language {
   return value === "en" ? "en" : "ru";
 }
 
-function label(language, key) {
+function label(language: Language, key: LabelKey): string {
   return labels[language][key];
 }
 
-function formatStatus(status) {
+function formatStatus(status: StatusResponse): string {
   const language = uiLanguage(status.language);
   return [
     `${label(language, "status")}: ${status.status}`,
@@ -114,12 +186,12 @@ function formatStatus(status) {
   ].join("\n");
 }
 
-function formatRoles(roles, language) {
+function formatRoles(roles: RolesResponse, language: Language): string {
   return [
     `${label(language, "currentRole")}: ${roles.currentRole}`,
     `${label(language, "defaultRole")}: ${roles.defaultRole}`,
     `${label(language, "rootRole")}: ${roles.rootRole}`,
-    `${label(language, "permissions")}: ${(roles.permissions || []).join(", ")}`,
+    `${label(language, "permissions")}: ${roles.permissions.join(", ")}`,
     `${label(language, "rootAccess")}: ${roles.hasRootAccess ? label(language, "allow") : label(language, "deny")}`,
     `${label(language, "rootHash")}: ${roles.rootHashConfigured ? label(language, "configured") : label(language, "missing")}`,
     `${label(language, "rootSession")}: ${roles.rootSessionUnlocked ? label(language, "unlocked") : label(language, "locked")}`,
@@ -127,7 +199,7 @@ function formatRoles(roles, language) {
   ].join("\n");
 }
 
-function renderApps() {
+function renderApps(): void {
   el.appsCount.textContent = String(state.apps.length);
   el.apps.replaceChildren();
 
@@ -148,49 +220,57 @@ function renderApps() {
     button.type = "button";
     button.className = "primary";
     button.textContent = "Запуск";
-    button.addEventListener("click", () => runApp(app.name));
+    button.addEventListener("click", () => {
+      void runApp(app.name);
+    });
 
     row.append(meta, button);
     el.apps.append(row);
   }
 }
 
-async function refresh() {
+async function refresh(): Promise<void> {
   el.health.textContent = "...";
   try {
     const [health, status, roles, apps] = await Promise.all([
-      api("/health"),
-      api("/api/status"),
-      api("/api/roles"),
-      api("/api/apps"),
+      api<HealthResponse>("/health"),
+      api<StatusResponse>("/api/status"),
+      api<RolesResponse>("/api/roles"),
+      api<AppsResponse>("/api/apps"),
     ]);
 
     const language = uiLanguage(status.language);
     document.documentElement.lang = language;
     el.health.textContent = health.ok ? "online" : "error";
-    el.summary.textContent = "127.0.0.1:8080";
+    el.summary.textContent = `${health.service} · 127.0.0.1:8080`;
     el.status.textContent = formatStatus(status);
     el.roles.textContent = formatRoles(roles, language);
     el.roleName.textContent = roles.currentRole || "...";
-    state.apps = Array.isArray(apps.apps) ? apps.apps : [];
+    state.apps = apps.apps;
     renderApps();
   } catch (error) {
     el.health.textContent = "error";
-    setOutput(error.message, true);
+    setOutput(error instanceof Error ? error.message : String(error), true);
   }
 }
 
-async function runApp(name) {
+async function runApp(name: string): Promise<void> {
   setOutput(`$ ${name}\n...`);
   try {
-    const result = await api(`/api/run?name=${encodeURIComponent(name)}`);
-    setOutput(result.output || "");
+    const result = await api<RunResponse>(
+      `/api/run?name=${encodeURIComponent(name)}`,
+    );
+    setOutput(result.output);
   } catch (error) {
-    setOutput(error.message, true);
+    setOutput(error instanceof Error ? error.message : String(error), true);
   }
 }
 
-el.refresh.addEventListener("click", refresh);
-el.clearOutput.addEventListener("click", () => setOutput(""));
+el.refresh.addEventListener("click", () => {
+  void refresh();
+});
+el.clearOutput.addEventListener("click", () => {
+  setOutput("");
+});
 
-refresh();
+void refresh();
