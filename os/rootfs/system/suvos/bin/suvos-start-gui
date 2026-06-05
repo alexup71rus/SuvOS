@@ -17,6 +17,47 @@ find_chromium() {
   return 1
 }
 
+cmdline_has_arg() {
+  for arg in $(cat /proc/cmdline 2>/dev/null || true); do
+    [ "$arg" = "$1" ] && return 0
+  done
+  return 1
+}
+
+cmdline_value() {
+  key="$1"
+  for arg in $(cat /proc/cmdline 2>/dev/null || true); do
+    case "$arg" in
+      "$key"=*)
+        printf '%s\n' "${arg#*=}"
+        return 0
+        ;;
+    esac
+  done
+  return 0
+}
+
+prepare_chromium_sandbox() {
+  for sandbox in /usr/lib/chromium/chrome-sandbox /usr/lib/chromium/chrome_sandbox; do
+    [ -f "$sandbox" ] || continue
+    chown 0:0 "$sandbox" 2>/tmp/suvos-chrome-sandbox.err || {
+      echo "suvos-gui: cannot set Chromium sandbox owner"
+      cat /tmp/suvos-chrome-sandbox.err 2>/dev/null || true
+      return 1
+    }
+    chmod 4755 "$sandbox" 2>/tmp/suvos-chrome-sandbox.err || {
+      echo "suvos-gui: cannot set Chromium sandbox mode"
+      cat /tmp/suvos-chrome-sandbox.err 2>/dev/null || true
+      return 1
+    }
+    echo "suvos-gui: chromium sandbox helper: $(ls -l "$sandbox")"
+    return 0
+  done
+
+  echo "suvos-gui: Chromium sandbox helper not found; relying on kernel sandbox support"
+  return 0
+}
+
 echo "suvos-gui: preparing runtime"
 
 if ! command -v cage >/dev/null 2>&1; then
@@ -29,14 +70,34 @@ CHROMIUM_BIN="$(find_chromium)" || {
   exit 1
 }
 
-mkdir -p /run/user/0 /data/suvos/chromium /data/suvos/downloads /data/suvos/tmp
-chmod 0700 /run/user/0 /data/suvos/chromium /data/suvos/tmp
+if ! command -v su-exec >/dev/null 2>&1; then
+  echo "suvos-gui: su-exec is not installed"
+  exit 1
+fi
+
+BROWSER_USER="${SUVOS_BROWSER_USER:-suvos-browser}"
+BROWSER_UID="$(id -u "$BROWSER_USER" 2>/dev/null || true)"
+if [ -z "$BROWSER_UID" ]; then
+  echo "suvos-gui: browser user is missing: $BROWSER_USER"
+  exit 1
+fi
+
+BROWSER_HOME=/data/suvos/chromium
+BROWSER_RUNTIME_DIR="/run/user/$BROWSER_UID"
+mkdir -p "$BROWSER_RUNTIME_DIR" "$BROWSER_HOME" /data/suvos/downloads /data/suvos/tmp
+chown -R "$BROWSER_USER:$BROWSER_USER" "$BROWSER_RUNTIME_DIR" "$BROWSER_HOME" /data/suvos/downloads /data/suvos/tmp
+chmod 0700 "$BROWSER_RUNTIME_DIR" "$BROWSER_HOME" /data/suvos/tmp
 chmod 0755 /data/suvos/downloads
 
-export XDG_RUNTIME_DIR=/run/user/0
+echo "suvos-gui: browser user: $BROWSER_USER"
+id "$BROWSER_USER" 2>/dev/null || true
+
+export XDG_RUNTIME_DIR="$BROWSER_RUNTIME_DIR"
 export XDG_CURRENT_DESKTOP=SuvOS
 export XDG_SESSION_TYPE=wayland
-export HOME=/data/suvos/chromium
+export HOME="$BROWSER_HOME"
+export USER="$BROWSER_USER"
+export LOGNAME="$BROWSER_USER"
 export WLR_LIBINPUT_NO_DEVICES="${WLR_LIBINPUT_NO_DEVICES:-1}"
 export WLR_RENDERER_ALLOW_SOFTWARE="${WLR_RENDERER_ALLOW_SOFTWARE:-1}"
 export WLR_NO_HARDWARE_CURSORS="${WLR_NO_HARDWARE_CURSORS:-1}"
@@ -92,7 +153,8 @@ if command -v dbus-daemon >/dev/null 2>&1; then
       }
   fi
 
-  DBUS_INFO="$(dbus-daemon --session --fork --print-address=1 --print-pid=1 2>/tmp/suvos-dbus.err)" || {
+  rm -f "$XDG_RUNTIME_DIR/bus"
+  DBUS_INFO="$(su-exec "$BROWSER_USER" dbus-daemon --session --address="unix:path=$XDG_RUNTIME_DIR/bus" --fork --print-address=1 --print-pid=1 2>/tmp/suvos-dbus.err)" || {
     echo "suvos-gui: dbus session start failed"
     cat /tmp/suvos-dbus.err 2>/dev/null || true
     DBUS_INFO=""
@@ -105,7 +167,7 @@ if command -v dbus-daemon >/dev/null 2>&1; then
 fi
 
 if command -v seatd >/dev/null 2>&1; then
-  seatd -u root -g root -l error >/tmp/suvos-seatd.log 2>&1 &
+  seatd -u root -g video -l error >/tmp/suvos-seatd.log 2>&1 &
   export LIBSEAT_BACKEND=seatd
   sleep 1
   echo "suvos-gui: seatd started"
@@ -171,23 +233,61 @@ done
 
 SUVOS_GUI_URL="${SUVOS_GUI_URL:-http://127.0.0.1:8080/}"
 SUVOS_CAGE_FLAGS="${SUVOS_CAGE_FLAGS:--d}"
+SUVOS_RENDER_PROFILE="${SUVOS_RENDER_PROFILE:-$(cmdline_value suvos.render)}"
+[ -n "$SUVOS_RENDER_PROFILE" ] || SUVOS_RENDER_PROFILE=hardware
+
+case "$SUVOS_RENDER_PROFILE" in
+  hardware|qemu-tcg) ;;
+  *)
+    echo "suvos-gui: unsupported render profile: $SUVOS_RENDER_PROFILE"
+    exit 1
+    ;;
+esac
+
+echo "suvos-gui: render profile: $SUVOS_RENDER_PROFILE"
+
+prepare_chromium_sandbox || exit 1
 
 set -- "$CHROMIUM_BIN" \
   --ozone-platform=wayland \
-  --user-data-dir=/data/suvos/chromium/profile \
+  --user-data-dir="$BROWSER_HOME/profile" \
   --no-first-run \
   --no-default-browser-check \
   --disable-background-networking \
   --disable-sync \
-  --disable-dev-shm-usage \
-  --disable-gpu \
-  --disable-accelerated-video-decode \
-  --disable-features=Vulkan,VulkanFromANGLE,VaapiVideoDecodeLinuxGL,VaapiVideoEncoder \
-  --no-sandbox
+  --disable-dev-shm-usage
+
+if [ "$SUVOS_RENDER_PROFILE" = "qemu-tcg" ]; then
+  set -- "$@" \
+    --disable-gpu \
+    --disable-accelerated-video-decode \
+    --disable-features=Vulkan,VulkanFromANGLE,VaapiVideoDecodeLinuxGL,VaapiVideoEncoder
+fi
+
+ALLOW_NO_SANDBOX=0
+if [ "${SUVOS_CHROMIUM_ALLOW_NO_SANDBOX:-0}" = "1" ] || cmdline_has_arg "suvos.allow_no_sandbox=1"; then
+  ALLOW_NO_SANDBOX=1
+fi
 
 if [ -n "${SUVOS_CHROMIUM_FLAGS:-}" ]; then
+  case " $SUVOS_CHROMIUM_FLAGS " in
+    *" --no-sandbox "*)
+      if [ "$ALLOW_NO_SANDBOX" -ne 1 ]; then
+        echo "suvos-gui: Chromium sandbox disable flag requires explicit dev override"
+        exit 1
+      fi
+      ;;
+  esac
   # Intentional shell splitting: this variable is a developer boot override.
   set -- "$@" $SUVOS_CHROMIUM_FLAGS
+fi
+
+if [ "$ALLOW_NO_SANDBOX" -eq 1 ]; then
+  echo "suvos-gui: Chromium sandbox disabled by explicit dev override"
+  case " $* " in
+    *" --no-sandbox "*) ;;
+    *) set -- "$@" --no-sandbox ;;
+  esac
 fi
 
 set -- "$@" "$SUVOS_GUI_URL"
@@ -195,4 +295,4 @@ set -- "$@" "$SUVOS_GUI_URL"
 echo "suvos-gui: starting Cage with Chromium"
 echo "suvos-gui: url=$SUVOS_GUI_URL"
 # Intentional shell splitting: this variable is a developer boot override.
-exec cage $SUVOS_CAGE_FLAGS -- "$@"
+exec su-exec "$BROWSER_USER" cage $SUVOS_CAGE_FLAGS -- "$@"

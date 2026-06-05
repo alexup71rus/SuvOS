@@ -370,7 +370,11 @@ cage -- chromium --ozone-platform=wayland --user-data-dir=/data/suvos/chromium -
 
 Текущий MVP запускает Chromium как Wayland-клиент через `--ozone-platform=wayland`. `xwayland` может присутствовать в образе как runtime-зависимость Alpine-пакета Cage, потому что Cage 0.2.0 в этой сборке пытается поднять XWayland server при старте. Это не должно становиться основным UI path; позже можно собрать Cage без Xwayland или заменить пакетную стратегию.
 
-Разрешение GUI-профиля задается на старте через QEMU `virtio-vga,xres=...,yres=...,edid=on`. Это дает параметризуемый стартовый режим для `make run-gui SUVOS_GUI_WIDTH=... SUVOS_GUI_HEIGHT=...`. Полноценный live resize окна нужно проверять отдельно: он зависит не от web UI, а от цепочки QEMU Cocoa -> virtio-gpu -> Linux DRM -> wlroots/Cage.
+Root остается только supervisor'ом для подготовки `udev`, `dbus`, `seatd`, `/run/user/1000` и writable browser state. Cage и Chromium запускаются через `su-exec` под системным пользователем `suvos-browser` с UID/GID 1000 и группами `video`, `input`, `audio`. `--no-sandbox` не является default-флагом; он допускается только как явный dev escape через `suvos.allow_no_sandbox=1` или `SUVOS_CHROMIUM_ALLOW_NO_SANDBOX=1`.
+
+Разрешение GUI-профиля задается на старте через QEMU `virtio-vga,xres=...,yres=...,edid=on`. Это дает параметризуемый стартовый режим для `make run-gui SUVOS_GUI_WIDTH=... SUVOS_GUI_HEIGHT=...`; `make test-gui-resolutions` проверяет 1024x768 и 1440x900. Полноценный live resize окна нужно проверять отдельно: он зависит не от web UI, а от цепочки QEMU Cocoa -> virtio-gpu -> Linux DRM -> wlroots/Cage.
+
+Render profile задается через `suvos.render=<profile>`. Default без параметра - `hardware`, чтобы реальный device path не был искусственно ограничен software rendering. QEMU Cocoa/TCG dev path использует `qemu-tcg`: он включает conservative software fallback и трактует GPU/Vulkan warnings как ожидаемое ограничение dev-эмуляции, а не как финальное поведение ОС.
 
 Cursor theme, QEMU input devices и audio backend относятся к заменяемому GUI runtime layer. Они не должны становиться частью core-логики SuvOS. Текущий default: Alpine cursor package, USB HID keyboard/tablet/mouse через `qemu-xhci`, CoreAudio + virtio-sound на macOS host. Для input discovery нужен `eudev`: kernel modules создают `/dev/input/*`, а udev metadata позволяет libinput/wlroots/Cage увидеть эти устройства как usable seat devices.
 
@@ -467,7 +471,7 @@ Phase C: Chromium patch.
 cage -- chromium --ozone-platform=wayland --user-data-dir=/data/suvos/chromium --no-first-run http://127.0.0.1:8080/
 ```
 
-Это не финальная команда, а направление. Конкретные флаги Chromium будут зависеть от дистрибутива, версии Chromium, Wayland/GPU, sandbox и profile/policy strategy. Важная граница MVP: не использовать `--kiosk`/`--app`, пока сохраняются требования к обычным вкладкам, адресной строке и extensions UI.
+Это не финальная команда, а направление. В реальном init flow запуск идет через root-supervisor и `su-exec suvos-browser ...`; конкретные флаги Chromium зависят от дистрибутива, версии Chromium, Wayland/GPU, sandbox и profile/policy strategy. Важная граница MVP: не использовать `--kiosk`/`--app`, пока сохраняются требования к обычным вкладкам, адресной строке и extensions UI.
 
 Локально установленный Homebrew QEMU `11.0.1` для x86_64 на Mac M сейчас поддерживает display backends `none`, `curses`, `cocoa`, `dbus` и accelerator только `tcg`. Для первого графического этапа этого достаточно: QEMU умеет открыть окно через `cocoa`. Vulkan/GPU acceleration не стоит делать условием первого UI: сначала нужен framebuffer/splash или software-rendered Wayland/Chromium, а Vulkan/virgl/venus лучше проверять отдельной итерацией и, вероятно, на Linux host или другой QEMU-сборке с GPU acceleration.
 
@@ -531,9 +535,12 @@ Linux kernel - GPL. Chromium, Node.js, Python и остальные пакеты
 MVP GUI boot:
 
 - boot -> green splash -> Cage -> Chromium fullscreen window;
+- Cage/Chromium работают под `suvos-browser`, а не под root;
+- default GUI boot не содержит `--no-sandbox`;
 - tabs, address bar и extensions UI видимы;
 - browser window controls скрыты там, где это позволяет `cage -d` и Chromium/Wayland decoration protocol;
 - нет GNOME/KDE/session manager processes;
+- startup resolution проверяется автоматически, live resize остается manual/hardware validation;
 - serial/recovery path остается доступен.
 
 Settings/API:

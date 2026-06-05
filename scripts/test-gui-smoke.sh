@@ -17,7 +17,7 @@ SUVOS_CPUS="${SUVOS_CPUS:-4}" \
 SUVOS_DISPLAY="${SUVOS_DISPLAY:-cocoa}" \
 SUVOS_VIDEO_DEVICE="${SUVOS_VIDEO_DEVICE:-virtio-vga,xres=$GUI_WIDTH,yres=$GUI_HEIGHT,edid=on}" \
 SUVOS_EXTRA_QEMU_ARGS="${SUVOS_EXTRA_QEMU_ARGS:-$GUI_INPUT_DEVICES $GUI_AUDIO_DEVICES}" \
-SUVOS_APPEND="${SUVOS_APPEND:-console=ttyS0 rdinit=/init quiet loglevel=3 panic=-1 suvos.graphics=1 suvos.gui=1}" \
+SUVOS_APPEND="${SUVOS_APPEND:-console=ttyS0 rdinit=/init quiet loglevel=3 panic=-1 suvos.graphics=1 suvos.gui=1 suvos.render=qemu-tcg}" \
   "$ROOT_DIR/scripts/run-suvos.sh" >"$LOG" 2>&1 &
 
 pid=$!
@@ -42,9 +42,33 @@ if ! grep -q 'suvos-gui: starting Cage with Chromium' "$LOG"; then
   exit 1
 fi
 
-if grep -E 'Cannot create XWayland server|libinput initialization failed|Unable to start the wlroots backend' "$LOG" >/dev/null; then
+if grep -E 'libinput initialization failed|Unable to start the wlroots backend' "$LOG" >/dev/null; then
   echo "gui smoke failed: known Cage/wlroots startup error found; log: $LOG" >&2
   sed -n '1,260p' "$LOG" >&2
+  exit 1
+fi
+
+if grep -E '\[init\] SuvOS browser shell exited|Aborting now to avoid profile corruption|No usable sandbox|Failed to move to new namespace' "$LOG" >/dev/null; then
+  echo "gui smoke failed: Chromium/Cage exited before smoke timeout; log: $LOG" >&2
+  sed -n '1,360p' "$LOG" >&2
+  exit 1
+fi
+
+if ! grep -q 'suvos-gui: browser user: suvos-browser' "$LOG"; then
+  echo "gui smoke failed: browser is not configured for suvos-browser; log: $LOG" >&2
+  sed -n '1,260p' "$LOG" >&2
+  exit 1
+fi
+
+if ! grep -q 'suvos-gui: render profile: qemu-tcg' "$LOG"; then
+  echo "gui smoke failed: qemu-tcg render profile not found; log: $LOG" >&2
+  sed -n '1,260p' "$LOG" >&2
+  exit 1
+fi
+
+if grep -q -- '--no-sandbox' "$LOG" || grep -q 'unsupported command-line flag.*no-sandbox' "$LOG"; then
+  echo "gui smoke failed: Chromium sandbox disable flag leaked into default GUI boot; log: $LOG" >&2
+  sed -n '1,360p' "$LOG" >&2
   exit 1
 fi
 

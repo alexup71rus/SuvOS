@@ -1,4 +1,4 @@
-.PHONY: all assets initramfs initramfs-core initramfs-gui cpp suvosd suvosctl suvos-gateway suvos-splash ui ui-check ui-fix run run-core run-graphics run-core-graphics run-gui test test-core test-full test-gui-smoke clean clean-layer-cache distclean
+.PHONY: all assets initramfs initramfs-core initramfs-gui cpp suvosd suvosctl suvos-gateway suvos-splash ui ui-check ui-fix run run-core run-graphics run-core-graphics run-gui test test-core test-full test-gui-smoke test-gui-resolutions clean clean-layer-cache distclean
 
 SUVOS_GUI_WIDTH ?= 1280
 SUVOS_GUI_HEIGHT ?= 800
@@ -57,7 +57,7 @@ run-core-graphics: initramfs-core
 	SUVOS_DISPLAY=cocoa SUVOS_VGA=std SUVOS_APPEND="console=ttyS0 rdinit=/init quiet loglevel=3 panic=-1 vga=791 suvos.graphics=1" scripts/run-suvos.sh
 
 run-gui: initramfs-gui
-	SUVOS_MEMORY=3072M SUVOS_CPUS=4 SUVOS_DISPLAY=cocoa SUVOS_VIDEO_DEVICE="$(SUVOS_GUI_VIDEO_DEVICE)" SUVOS_EXTRA_QEMU_ARGS="$(SUVOS_GUI_INPUT_DEVICES) $(SUVOS_GUI_AUDIO_DEVICES)" SUVOS_APPEND="console=ttyS0 rdinit=/init quiet loglevel=3 panic=-1 suvos.graphics=1 suvos.gui=1" scripts/run-suvos.sh
+	SUVOS_MEMORY=3072M SUVOS_CPUS=4 SUVOS_DISPLAY=cocoa SUVOS_VIDEO_DEVICE="$(SUVOS_GUI_VIDEO_DEVICE)" SUVOS_EXTRA_QEMU_ARGS="$(SUVOS_GUI_INPUT_DEVICES) $(SUVOS_GUI_AUDIO_DEVICES)" SUVOS_APPEND="console=ttyS0 rdinit=/init quiet loglevel=3 panic=-1 suvos.graphics=1 suvos.gui=1 suvos.render=qemu-tcg" scripts/run-suvos.sh
 
 test: test-core
 
@@ -69,6 +69,10 @@ test-full: initramfs
 
 test-gui-smoke: initramfs-gui
 	scripts/test-gui-smoke.sh
+
+test-gui-resolutions: initramfs-gui
+	SUVOS_GUI_WIDTH=1024 SUVOS_GUI_HEIGHT=768 scripts/test-gui-smoke.sh
+	SUVOS_GUI_WIDTH=1440 SUVOS_GUI_HEIGHT=900 scripts/test-gui-smoke.sh
 
 clean:
 	chmod -R u+w build/rootfs 2>/dev/null || true

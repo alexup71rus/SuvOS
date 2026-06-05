@@ -38,6 +38,8 @@ Use Russian for user-facing explanations unless the user asks otherwise. Code id
 - Keep `suvos-splash` framebuffer-only as the current graphics smoke baseline.
 - When moving to the browser shell stage, follow `SuvOS_CONCEPT.md`: Wayland runtime + Cage + ordinary Chromium, not `--kiosk`/`--app`, unless the user explicitly changes the browser-shell requirement.
 - Store the Chromium profile under `/data/suvos/chromium`; do not put browser user state in `/system/suvos`.
+- Run Cage/Chromium as `suvos-browser`, not root. Do not add `--no-sandbox` to the default GUI boot; use only the explicit dev escape documented in `SuvOS_CONCEPT.md`.
+- Keep QEMU software-rendering flags scoped to `suvos.render=qemu-tcg`; the implicit default render profile is `hardware`.
 - Do not add GNOME, KDE, or a full desktop/session manager for the default SuvOS UI path.
 - `xwayland` may be kept only as a Cage package/runtime dependency; Chromium should stay on the Wayland/Ozone path for the default GUI.
 - If graphics behavior changes, keep the boot resilient when `/dev/fb0` is unavailable and report diagnostics over serial.
@@ -96,11 +98,14 @@ Experimental GUI run:
 ```sh
 make run-gui
 make test-gui-smoke
+make test-gui-resolutions
 ```
 
 `make run-gui` and `make test-gui-smoke` are intentionally heavier than the normal tests because they embed Chromium into the initramfs. Do not use them as the default verification path unless the change touches the browser shell boot flow. `make test-gui-smoke` opens a QEMU window briefly and only validates serial-log startup health; manual visual validation is still required for rendering and input behavior.
 
 GUI resolution can be overridden with `SUVOS_GUI_WIDTH` and `SUVOS_GUI_HEIGHT`, for example `make run-gui SUVOS_GUI_WIDTH=1440 SUVOS_GUI_HEIGHT=900`.
+
+Use `make test-gui-resolutions` when changing QEMU video setup, render profiles, or startup resolution handling. It validates startup modes only; live window resize still needs manual/hardware validation.
 
 Cursor theme, QEMU input devices, udev/libinput discovery, and audio backend are GUI runtime details. Keep them replaceable through build/run variables and do not move them into SuvOS core policy or control-plane logic. If mouse devices exist under `/dev/input` but Cage has no usable mouse, check whether `eudev` started and whether `libinput list-devices` returns devices.
 

@@ -116,7 +116,7 @@ make run-core-graphics
 make run-gui
 ```
 
-`make run-gui` собирает отдельный GUI-профиль с `SUVOS_WITH_GUI=1`, устанавливает Alpine-пакеты `cage`, `chromium`, `xwayland`, `dbus`, `seatd`, `eudev`, fonts, cursor theme, ALSA diagnostics и Mesa/Wayland-зависимости, затем грузит QEMU с `suvos.graphics=1 suvos.gui=1`. Это тяжелый профиль: Chromium скачивается и попадает в initramfs, поэтому он не используется в `make test`. После первого успешного build GUI-пакеты берутся из rootfs layer cache, пока не изменится список пакетов или Alpine image. QEMU GUI-профиль по умолчанию использует USB HID keyboard/tablet/mouse через `qemu-xhci`, CoreAudio + virtio-sound для звука и запускает Cage с `-d`, чтобы по возможности убрать client-side window controls. `eudev` нужен не как desktop environment, а как device discovery слой для libinput/wlroots; без него kernel может видеть `/dev/input/event*`, но Cage не получает мышь.
+`make run-gui` собирает отдельный GUI-профиль с `SUVOS_WITH_GUI=1`, устанавливает Alpine-пакеты `cage`, `chromium`, `xwayland`, `dbus`, `seatd`, `eudev`, `su-exec`, fonts, cursor theme, ALSA diagnostics и Mesa/Wayland-зависимости, затем грузит QEMU с `suvos.graphics=1 suvos.gui=1 suvos.render=qemu-tcg`. Это тяжелый профиль: Chromium скачивается и попадает в initramfs, поэтому он не используется в `make test`. После первого успешного build GUI-пакеты берутся из rootfs layer cache, пока не изменится список пакетов или Alpine image. QEMU GUI-профиль по умолчанию использует USB HID keyboard/tablet/mouse через `qemu-xhci`, CoreAudio + virtio-sound для звука и запускает Cage с `-d`, чтобы по возможности убрать client-side window controls. `eudev` нужен не как desktop environment, а как device discovery слой для libinput/wlroots; без него kernel может видеть `/dev/input/event*`, но Cage не получает мышь.
 
 Cursor theme сейчас является заменяемой GUI-зависимостью, а не частью core-логики SuvOS. По умолчанию используется Alpine-пакет `adwaita-icon-theme`; заменить его можно так:
 
@@ -124,16 +124,19 @@ Cursor theme сейчас является заменяемой GUI-зависи
 SUVOS_CURSOR_THEME_PACKAGE=breeze-icons make run-gui
 ```
 
-Chromium в этом режиме запускается как Wayland-клиент через `--ozone-platform=wayland`. `xwayland` присутствует только потому, что текущий Alpine-пакет Cage 0.2.0 пытается поднять XWayland server при старте и падает без `/usr/bin/Xwayland`. Это не означает, что SuvOS переходит на X11. В MVP Chromium запускается от root с `--no-sandbox`; это только ранний dev-компромисс до появления нормального user/session слоя.
+Chromium в этом режиме запускается как Wayland-клиент через `--ozone-platform=wayland`. `xwayland` присутствует только потому, что текущий Alpine-пакет Cage 0.2.0 пытается поднять XWayland server при старте; это не означает, что SuvOS переходит на X11. Cage/Chromium запускаются не от root, а от системного пользователя `suvos-browser` с профилем в `/data/suvos/chromium`. `--no-sandbox` запрещен в default GUI boot; включить его можно только явным dev escape через `suvos.allow_no_sandbox=1` или `SUVOS_CHROMIUM_ALLOW_NO_SANDBOX=1`.
+
+Render profile задается через `suvos.render=<profile>`. Если параметр не указан, используется `hardware`, чтобы реальная ОС не осталась навсегда в software-only режиме. QEMU на Mac M через Cocoa/TCG запускается с `suvos.render=qemu-tcg`, где допустим software fallback и ожидаемы GPU/Vulkan warnings в serial log.
 
 Стартовое разрешение GUI-профиля можно менять без правки скриптов:
 
 ```sh
 make run-gui SUVOS_GUI_WIDTH=1440 SUVOS_GUI_HEIGHT=900
 make test-gui-smoke SUVOS_GUI_WIDTH=1024 SUVOS_GUI_HEIGHT=768
+make test-gui-resolutions
 ```
 
-Это задает `virtio-vga,xres=...,yres=...,edid=on`. Live resize окна QEMU зависит от связки QEMU Cocoa -> virtio-gpu -> Linux DRM -> wlroots/Cage и пока считается отдельной проверкой, а не гарантированной возможностью.
+Это задает `virtio-vga,xres=...,yres=...,edid=on`. `make test-gui-resolutions` автоматически проверяет стартовые режимы 1024x768 и 1440x900. Live resize окна QEMU зависит от связки QEMU Cocoa -> virtio-gpu -> Linux DRM -> wlroots/Cage и пока считается отдельной ручной/hardware-проверкой, а не гарантированной возможностью.
 
 Input/audio devices тоже можно переопределить:
 
@@ -148,7 +151,7 @@ GUI smoke-test:
 make test-gui-smoke
 ```
 
-Он тоже собирает GUI-профиль и открывает окно QEMU на ограниченное время. Тест проверяет serial-лог на запуск Cage/Chromium и известные ошибки Cage/wlroots, но не доказывает визуально, что браузер корректно отрисовал страницу. Для визуальной проверки всё еще нужен ручной `make run-gui`.
+Он тоже собирает GUI-профиль и открывает окно QEMU на ограниченное время. Тест проверяет serial-лог на запуск Cage/Chromium, пользователя `suvos-browser`, render profile, input/audio devices, отсутствие default `--no-sandbox` и ранний выход browser shell. Он не доказывает визуально, что браузер корректно отрисовал страницу. Для визуальной проверки всё еще нужен ручной `make run-gui`.
 
 Сборка создает внешний bootstrap-secret:
 
