@@ -14,6 +14,7 @@ SuvOS сейчас является минимальным x86_64 Linux-based п
 - внутренний Unix socket API в `/run/suvosd/control.sock` для будущего HTTP gateway;
 - диагностический socket client `suvosctl`;
 - localhost-only HTTP gateway `suvos-gateway` на `127.0.0.1:8080`;
+- структурированные JSON endpoints для статуса, ролей и app registry;
 - первая web UI-страница, отдаваемая через `suvos-gateway`;
 - app manifests в `/system/suvos/apps/manifest.d/*.app`;
 - read-only системная зона `/system/suvos` после boot;
@@ -98,6 +99,7 @@ suvosctl status
 suvosctl list
 suvosctl run hello
 wget -q -O - http://127.0.0.1:8080/api/status
+wget -q -O - http://127.0.0.1:8080/api/roles
 wget -q -O - http://127.0.0.1:8080/api/apps
 wget -q -O - 'http://127.0.0.1:8080/api/run?name=hello'
 wget -q -O - http://127.0.0.1:8080/
@@ -130,7 +132,7 @@ poweroff
 
 `suvosctl` нужен для проверки внутреннего Unix socket API. Основной интерактивный CLI пока остается `suvos`, а будущий HTTP gateway должен обращаться к `/run/suvosd/control.sock` так же, как `suvosctl`.
 
-`suvos-gateway` - первый HTTP boundary для будущего web UI. Он слушает только `127.0.0.1:8080`, отдает `/system/suvos/ui`, возвращает JSON и проксирует команды в `suvosd` через Unix socket. Текущие endpoints: `/`, `/ui/app.js`, `/ui/styles.css`, `/health`, `/api/status`, `/api/roles`, `/api/apps`, `/api/run?name=<app>`.
+`suvos-gateway` - первый HTTP boundary для будущего web UI. Он слушает только `127.0.0.1:8080`, отдает `/system/suvos/ui`, возвращает JSON и проксирует команды в `suvosd` через Unix socket. `/api/status`, `/api/roles` и `/api/apps` возвращают структурированные JSON-объекты для UI; `/api/run?name=<app>` остается command endpoint и возвращает `exitCode` плюс `output`. Текущие endpoints: `/`, `/ui/app.js`, `/ui/styles.css`, `/health`, `/api/status`, `/api/roles`, `/api/apps`, `/api/run?name=<app>`.
 
 Файлы SuvOS лежат здесь:
 

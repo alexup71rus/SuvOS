@@ -138,6 +138,30 @@ bool isRu() {
   return lang() == "ru";
 }
 
+std::string jsonEscape(const std::string &value) {
+  std::ostringstream out;
+  for (unsigned char ch : value) {
+    switch (ch) {
+      case '\\': out << "\\\\"; break;
+      case '"': out << "\\\""; break;
+      case '\b': out << "\\b"; break;
+      case '\f': out << "\\f"; break;
+      case '\n': out << "\\n"; break;
+      case '\r': out << "\\r"; break;
+      case '\t': out << "\\t"; break;
+      default:
+        if (ch < 0x20) {
+          const char *hex = "0123456789abcdef";
+          out << "\\u00" << hex[(ch >> 4) & 0x0f] << hex[ch & 0x0f];
+        } else {
+          out << static_cast<char>(ch);
+        }
+        break;
+    }
+  }
+  return out.str();
+}
+
 bool systemRootReadOnly() {
   std::ifstream mounts("/proc/mounts");
   std::string line;
@@ -815,6 +839,82 @@ const App *findApp(const std::vector<App> &apps, const std::string &name) {
   return nullptr;
 }
 
+std::string statusJson() {
+  std::string uptime = readFile("/proc/uptime");
+  std::string uptimeSeconds = "0";
+  if (!uptime.empty()) {
+    auto values = split(uptime, ' ');
+    if (!values.empty() && !values[0].empty()) {
+      uptimeSeconds = values[0];
+    }
+  }
+
+  std::ostringstream out;
+  out << "{";
+  out << "\"ok\":true,";
+  out << "\"status\":\"booted\",";
+  out << "\"daemon\":\"running\",";
+  out << "\"language\":\"" << jsonEscape(lang()) << "\",";
+  out << "\"systemRoot\":\"" << jsonEscape(kSystemRoot) << "\",";
+  out << "\"systemRootReadOnly\":" << (systemRootReadOnly() ? "true" : "false") << ",";
+  out << "\"dataRoot\":\"" << jsonEscape(kDataRoot) << "\",";
+  out << "\"dataRootAvailable\":" << (dirExists(kDataRoot) ? "true" : "false") << ",";
+  out << "\"manifestDir\":\"" << jsonEscape(kManifestDir) << "\",";
+  out << "\"manifestDirAvailable\":" << (dirExists(kManifestDir) ? "true" : "false") << ",";
+  out << "\"apiSocket\":\"" << jsonEscape(kControlSocket) << "\",";
+  out << "\"apiSocketAvailable\":" << (pathIsSocket(kControlSocket) ? "true" : "false") << ",";
+  out << "\"rootfs\":\"initramfs\",";
+  out << "\"kernel\":\"" << jsonEscape(trim(readFile("/proc/version"))) << "\",";
+  out << "\"uptimeSeconds\":" << uptimeSeconds;
+  out << "}\n";
+  return out.str();
+}
+
+std::string rolesJson(const RolePolicy &policy) {
+  auto permissions = permissionsForRole(policy, currentRole(policy));
+  std::ostringstream out;
+  out << "{";
+  out << "\"ok\":true,";
+  out << "\"currentRole\":\"" << jsonEscape(currentRole(policy)) << "\",";
+  out << "\"defaultRole\":\"" << jsonEscape(policy.defaultRole) << "\",";
+  out << "\"rootRole\":\"" << jsonEscape(policy.rootRole) << "\",";
+  out << "\"permissions\":[";
+  for (size_t i = 0; i < permissions.size(); ++i) {
+    if (i > 0) {
+      out << ",";
+    }
+    out << "\"" << jsonEscape(permissions[i]) << "\"";
+  }
+  out << "],";
+  out << "\"hasRootAccess\":" << (hasPermission(policy, "*") ? "true" : "false") << ",";
+  out << "\"rootHashConfigured\":" << (rootHashConfigured(policy) ? "true" : "false") << ",";
+  out << "\"rootSessionUnlocked\":" << (rootSessionUnlocked(policy) ? "true" : "false") << ",";
+  out << "\"userCreation\":\"" << jsonEscape(policy.userCreation) << "\"";
+  out << "}\n";
+  return out.str();
+}
+
+std::string appsJson(const std::vector<App> &apps) {
+  std::ostringstream out;
+  out << "{\"ok\":true,\"apps\":[";
+  for (size_t i = 0; i < apps.size(); ++i) {
+    const auto &app = apps[i];
+    if (i > 0) {
+      out << ",";
+    }
+    out << "{";
+    out << "\"name\":\"" << jsonEscape(app.name) << "\",";
+    out << "\"description\":\"" << jsonEscape(app.description) << "\",";
+    out << "\"capability\":\"" << jsonEscape(app.permission) << "\",";
+    out << "\"runtime\":\"" << jsonEscape(app.runtime.empty() ? "native" : app.runtime) << "\",";
+    out << "\"version\":\"" << jsonEscape(app.version) << "\",";
+    out << "\"uiEntry\":\"" << jsonEscape(app.uiEntry) << "\"";
+    out << "}";
+  }
+  out << "]}\n";
+  return out.str();
+}
+
 CommandResult runProgram(const std::string &path, const std::vector<std::string> &args) {
   if (!fileExistsExecutable(path)) {
     return {127, tr("run.exec_missing") + path + "\n"};
@@ -969,6 +1069,14 @@ CommandResult handleCommand(const std::vector<std::string> &parts) {
     return {0, out.str()};
   }
 
+  if (command == "status-json") {
+    if (!hasPermission(policy, "status.read")) {
+      return {1, tr("permission.denied") + "status.read\n"};
+    }
+
+    return {0, statusJson()};
+  }
+
   if (command == "roles" || command == "role") {
     if (!hasPermission(policy, "role.read")) {
       return {1, tr("permission.denied") + "role.read\n"};
@@ -982,6 +1090,14 @@ CommandResult handleCommand(const std::vector<std::string> &parts) {
     out << tr("roles.auth_state") << ": " << (rootSessionUnlocked(policy) ? tr("roles.unlocked") : tr("roles.locked")) << "\n";
     out << tr("roles.user_creation") << ": " << policy.userCreation << "\n";
     return {0, out.str()};
+  }
+
+  if (command == "roles-json" || command == "role-json") {
+    if (!hasPermission(policy, "role.read")) {
+      return {1, tr("permission.denied") + "role.read\n"};
+    }
+
+    return {0, rolesJson(policy)};
   }
 
   if (command == "whoami") {
@@ -1055,6 +1171,14 @@ CommandResult handleCommand(const std::vector<std::string> &parts) {
       out << "\n";
     }
     return {0, out.str()};
+  }
+
+  if (command == "apps-json") {
+    if (!hasPermission(policy, "apps.list")) {
+      return {1, tr("permission.denied") + "apps.list\n"};
+    }
+
+    return {0, appsJson(apps)};
   }
 
   if (command == "run") {

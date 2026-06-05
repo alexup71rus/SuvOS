@@ -263,6 +263,8 @@ suvos status
 - `suvosctl` проверяет Unix socket API и служит диагностическим клиентом для будущего HTTP gateway;
 - `suvos-gateway` слушает `127.0.0.1:8080` и проксирует HTTP JSON API в `/run/suvosd/control.sock`;
 - первая web UI лежит в `/system/suvos/ui` и открывается через `http://127.0.0.1:8080/`;
+- `/api/status`, `/api/roles` и `/api/apps` возвращают структурированный JSON, чтобы UI не парсил локализованный CLI-текст;
+- `/api/run?name=<app>` остается command endpoint с `exitCode` и `output`;
 - `suvosd` выполняет `status`, `roles`, `list`, `run`;
 - `suvosd run` запускает только приложения из `/system/suvos/apps/manifest.d/*.app`, а имена с `/` и `..` блокируются;
 - каждый request обрабатывается отдельным worker-процессом, чтобы зависший app не останавливал основной daemon loop;
@@ -334,6 +336,7 @@ poweroff
 - локальный сервер слушает только `127.0.0.1`;
 - UI вызывает только API gateway;
 - API gateway прокидывает команды в `suvosd`;
+- browser-facing read endpoints возвращают структурированный JSON, а не текст CLI;
 - права UI ограничены capability-моделью.
 
 На этом этапе можно открывать UI обычным браузером внутри VM, еще без kiosk-режима.
@@ -399,7 +402,7 @@ Linux kernel - GPL. Chromium, Node.js, Python и остальные пакеты
 
 ## Что делать дальше
 
-Текущий прототип уже загружается в QEMU, имеет SuvOS shell, `suvosd`, app manifests, read-only `/system/suvos`, writable `/data/suvos`, Unix socket control API, localhost HTTP gateway, первую web UI, Python/Node/C++ demos, локализацию и bootstrap role auth.
+Текущий прототип уже загружается в QEMU, имеет SuvOS shell, `suvosd`, app manifests, read-only `/system/suvos`, writable `/data/suvos`, Unix socket control API, localhost HTTP gateway, первую web UI, structured JSON read API, Python/Node/C++ demos, локализацию и bootstrap role auth.
 
 Ближайший практичный план теперь другой:
 

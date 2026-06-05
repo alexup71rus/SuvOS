@@ -328,6 +328,17 @@ void proxyCommand(int fd, const std::vector<std::string> &parts) {
   sendJson(fd, httpStatus, httpStatus == 200 ? "OK" : "Error", resultJson(result));
 }
 
+void proxyJsonCommand(int fd, const std::vector<std::string> &parts) {
+  SuvosdResult result = callSuvosd(parts);
+  int httpStatus = result.transportOk ? (result.code == 0 ? 200 : 400) : 502;
+  if (httpStatus == 200) {
+    sendJson(fd, 200, "OK", result.output);
+    return;
+  }
+
+  sendJson(fd, httpStatus, "Error", resultJson(result));
+}
+
 void handleClient(int fd) {
   timeval timeout {};
   timeout.tv_sec = 5;
@@ -370,15 +381,15 @@ void handleClient(int fd) {
     return;
   }
   if (path == "/api/status") {
-    proxyCommand(fd, {"status"});
+    proxyJsonCommand(fd, {"status-json"});
     return;
   }
   if (path == "/api/roles") {
-    proxyCommand(fd, {"roles"});
+    proxyJsonCommand(fd, {"roles-json"});
     return;
   }
   if (path == "/api/apps") {
-    proxyCommand(fd, {"list"});
+    proxyJsonCommand(fd, {"apps-json"});
     return;
   }
   if (path == "/api/run") {

@@ -14,6 +14,7 @@ SuvOS is currently a minimal x86_64 Linux-based OS prototype:
 - internal Unix socket API at `/run/suvosd/control.sock` for the future HTTP gateway;
 - diagnostic socket client `suvosctl`;
 - localhost-only HTTP gateway `suvos-gateway` on `127.0.0.1:8080`;
+- structured JSON endpoints for status, roles, and the app registry;
 - first web UI page served through `suvos-gateway`;
 - app manifests at `/system/suvos/apps/manifest.d/*.app`;
 - read-only `/system/suvos` system area at boot;
@@ -98,6 +99,7 @@ suvosctl status
 suvosctl list
 suvosctl run hello
 wget -q -O - http://127.0.0.1:8080/api/status
+wget -q -O - http://127.0.0.1:8080/api/roles
 wget -q -O - http://127.0.0.1:8080/api/apps
 wget -q -O - 'http://127.0.0.1:8080/api/run?name=hello'
 wget -q -O - http://127.0.0.1:8080/
@@ -130,7 +132,7 @@ This first filesystem is initramfs-only. Files created outside the read-only sys
 
 `suvosctl` is a diagnostic client for the internal Unix socket API. The main interactive CLI remains `suvos`; the future HTTP gateway should call `/run/suvosd/control.sock` the same way `suvosctl` does.
 
-`suvos-gateway` is the first HTTP boundary for the future web UI. It listens only on `127.0.0.1:8080`, serves `/system/suvos/ui`, returns JSON, and proxies commands into `suvosd` through the Unix socket. Current endpoints: `/`, `/ui/app.js`, `/ui/styles.css`, `/health`, `/api/status`, `/api/roles`, `/api/apps`, `/api/run?name=<app>`.
+`suvos-gateway` is the first HTTP boundary for the future web UI. It listens only on `127.0.0.1:8080`, serves `/system/suvos/ui`, returns JSON, and proxies commands into `suvosd` through the Unix socket. `/api/status`, `/api/roles`, and `/api/apps` return structured JSON objects for the UI; `/api/run?name=<app>` remains a command endpoint and returns `exitCode` plus `output`. Current endpoints: `/`, `/ui/app.js`, `/ui/styles.css`, `/health`, `/api/status`, `/api/roles`, `/api/apps`, `/api/run?name=<app>`.
 
 SuvOS-owned files live under:
 

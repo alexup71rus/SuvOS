@@ -34,11 +34,17 @@ wget -q -O /tmp/suvos-ui-css.out http://127.0.0.1:8080/ui/styles.css
 grep -q '.panel' /tmp/suvos-ui-css.out
 wget -q -O /tmp/suvos-http-status.out http://127.0.0.1:8080/api/status
 cat /tmp/suvos-http-status.out
-grep -q '"exitCode":0' /tmp/suvos-http-status.out
-grep -q 'SuvOS status' /tmp/suvos-http-status.out
+grep -q '"status":"booted"' /tmp/suvos-http-status.out
+grep -q '"systemRootReadOnly":true' /tmp/suvos-http-status.out
+grep -q '"apiSocketAvailable":true' /tmp/suvos-http-status.out
+wget -q -O /tmp/suvos-http-roles.out http://127.0.0.1:8080/api/roles
+cat /tmp/suvos-http-roles.out
+grep -q '"currentRole":"setup"' /tmp/suvos-http-roles.out
+grep -q '"permissions":' /tmp/suvos-http-roles.out
 wget -q -O /tmp/suvos-http-apps.out http://127.0.0.1:8080/api/apps
 cat /tmp/suvos-http-apps.out
-grep -q 'hello' /tmp/suvos-http-apps.out
+grep -q '"apps":' /tmp/suvos-http-apps.out
+grep -q '"name":"hello"' /tmp/suvos-http-apps.out
 wget -q -O /tmp/suvos-http-run.out 'http://127.0.0.1:8080/api/run?name=hello'
 cat /tmp/suvos-http-run.out
 grep -q '"exitCode":0' /tmp/suvos-http-run.out
