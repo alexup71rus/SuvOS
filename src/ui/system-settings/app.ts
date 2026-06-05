@@ -93,6 +93,11 @@ const labels = {
     unlocked: "разблокирован",
     locked: "заблокирован",
     seconds: "секунд",
+    notifications: "Уведомления",
+    network: "Сеть",
+    local: "локально",
+    power: "Питание",
+    vm: "VM",
   },
   en: {
     status: "Status",
@@ -122,6 +127,11 @@ const labels = {
     unlocked: "unlocked",
     locked: "locked",
     seconds: "seconds",
+    notifications: "Notifications",
+    network: "Network",
+    local: "local",
+    power: "Power",
+    vm: "VM",
   },
 } as const;
 
@@ -131,8 +141,12 @@ const el = {
   apps: requiredElement<HTMLDivElement>("#apps"),
   appsCount: requiredElement<HTMLSpanElement>("#apps-count"),
   clearOutput: requiredElement<HTMLButtonElement>("#clear-output"),
+  clock: requiredElement<HTMLSpanElement>("#clock"),
   health: requiredElement<HTMLSpanElement>("#health"),
+  network: requiredElement<HTMLSpanElement>("#network"),
+  notifications: requiredElement<HTMLSpanElement>("#notifications"),
   output: requiredElement<HTMLPreElement>("#command-output"),
+  power: requiredElement<HTMLSpanElement>("#power"),
   refresh: requiredElement<HTMLButtonElement>("#refresh"),
   roleName: requiredElement<HTMLSpanElement>("#role-name"),
   roles: requiredElement<HTMLPreElement>("#roles"),
@@ -169,6 +183,26 @@ function uiLanguage(value: string): Language {
 
 function label(language: Language, key: LabelKey): string {
   return labels[language][key];
+}
+
+function updateClock(
+  language: Language = uiLanguage(document.documentElement.lang),
+): void {
+  const locale = language === "en" ? "en-US" : "ru-RU";
+  el.clock.textContent = new Intl.DateTimeFormat(locale, {
+    day: "2-digit",
+    hour: "2-digit",
+    hour12: false,
+    minute: "2-digit",
+    month: "2-digit",
+  }).format(new Date());
+}
+
+function renderSystemStrip(language: Language): void {
+  updateClock(language);
+  el.notifications.textContent = `${label(language, "notifications")}: 0`;
+  el.network.textContent = `${label(language, "network")}: ${label(language, "local")}`;
+  el.power.textContent = `${label(language, "power")}: ${label(language, "vm")}`;
 }
 
 function formatStatus(status: StatusResponse): string {
@@ -241,6 +275,7 @@ async function refresh(): Promise<void> {
 
     const language = uiLanguage(status.language);
     document.documentElement.lang = language;
+    renderSystemStrip(language);
     el.health.textContent = health.ok ? "online" : "error";
     el.summary.textContent = `${health.service} · 127.0.0.1:8080`;
     el.status.textContent = formatStatus(status);
@@ -274,3 +309,6 @@ el.clearOutput.addEventListener("click", () => {
 });
 
 void refresh();
+window.setInterval(() => {
+  updateClock();
+}, 30_000);

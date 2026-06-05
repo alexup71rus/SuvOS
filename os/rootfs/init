@@ -9,11 +9,14 @@ if [ -r /system/suvos/config/locale.conf ]; then
   export SUVOS_LANG="${SUVOS_LANG:-ru}"
 fi
 
+mkdir -p /dev /proc /sys /tmp /run /root /data
+
 mount -t proc proc /proc 2>/dev/null || true
 mount -t sysfs sysfs /sys 2>/dev/null || true
 mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
-
-mkdir -p /dev /proc /sys /tmp /run /root /data
+mkdir -p /dev/pts /dev/shm /run/user
+mount -t devpts devpts /dev/pts 2>/dev/null || true
+mount -t tmpfs -o mode=1777,nosuid,nodev suvos-shm /dev/shm 2>/dev/null || true
 
 exec </dev/console >/dev/console 2>&1
 
@@ -25,12 +28,14 @@ prepare_data_root() {
   mkdir -p /data/suvos
   mkdir -p /data/suvos/apps
   mkdir -p /data/suvos/extensions
+  mkdir -p /data/suvos/chromium
+  mkdir -p /data/suvos/downloads
   mkdir -p /data/suvos/state
   mkdir -p /data/suvos/logs
   mkdir -p /data/suvos/tmp
 
-  chmod 0755 /data /data/suvos /data/suvos/apps /data/suvos/extensions /data/suvos/logs
-  chmod 0700 /data/suvos/state /data/suvos/tmp
+  chmod 0755 /data /data/suvos /data/suvos/apps /data/suvos/extensions /data/suvos/downloads /data/suvos/logs
+  chmod 0700 /data/suvos/chromium /data/suvos/state /data/suvos/tmp
 }
 
 make_system_readonly() {
@@ -79,6 +84,12 @@ done
 if grep -qw 'suvos.autotest=1' /proc/cmdline 2>/dev/null; then
   /system/suvos/bin/suvos-autotest
   poweroff -f
+fi
+
+if grep -qw 'suvos.gui=1' /proc/cmdline 2>/dev/null; then
+  echo "[init] starting SuvOS browser shell" >/dev/console
+  /system/suvos/bin/suvos-start-gui 2>&1 | tee /tmp/suvos-gui.log
+  echo "[init] SuvOS browser shell exited; falling back to console" >/dev/console
 fi
 
 exec /system/suvos/bin/suvos-shell

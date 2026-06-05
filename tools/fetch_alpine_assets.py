@@ -14,6 +14,7 @@ REPO = f"https://dl-cdn.alpinelinux.org/alpine/{ALPINE_RELEASE}/main/{ARCH}"
 ROOT = Path(__file__).resolve().parents[1]
 CACHE = ROOT / "build" / "cache"
 ASSETS = ROOT / "build" / "assets"
+ASSET_SCHEMA = "6"
 KERNEL_OUT = ROOT / "build" / "kernel" / "vmlinuz-x86_64"
 GRAPHICS_MODULES_OUT = ROOT / "build" / "kernel" / "graphics-modules"
 GRAPHICS_MODULES_ORDER_OUT = ROOT / "build" / "kernel" / "graphics-modules.order"
@@ -24,6 +25,19 @@ GRAPHICS_MODULE_TARGETS = [
   "kernel/drivers/gpu/drm/tiny/bochs.ko.gz",
   "kernel/drivers/gpu/drm/tiny/simpledrm.ko.gz",
   "kernel/drivers/gpu/drm/virtio/virtio-gpu.ko.gz",
+  "kernel/drivers/input/evdev.ko.gz",
+  "kernel/drivers/input/mousedev.ko.gz",
+  "kernel/drivers/input/mouse/psmouse.ko.gz",
+  "kernel/drivers/hid/hid-generic.ko.gz",
+  "kernel/drivers/hid/usbhid/usbhid.ko.gz",
+  "kernel/drivers/hid/usbhid/usbkbd.ko.gz",
+  "kernel/drivers/hid/usbhid/usbmouse.ko.gz",
+  "kernel/drivers/usb/host/xhci-pci.ko.gz",
+  "kernel/drivers/virtio/virtio_input.ko.gz",
+  "kernel/sound/pci/hda/snd-hda-intel.ko.gz",
+  "kernel/sound/pci/hda/snd-hda-codec-generic.ko.gz",
+  "kernel/sound/pci/snd-ens1371.ko.gz",
+  "kernel/sound/virtio/virtio_snd.ko.gz",
 ]
 
 
@@ -180,7 +194,11 @@ def assets_ready() -> bool:
     for line in MANIFEST_OUT.read_text(encoding="utf-8").splitlines()
     if "=" in line
   )
-  return fields.get("release") == ALPINE_RELEASE and graphics_modules_ready()
+  return (
+    fields.get("schema") == ASSET_SCHEMA
+    and fields.get("release") == ALPINE_RELEASE
+    and graphics_modules_ready()
+  )
 
 
 def main() -> None:
@@ -208,6 +226,7 @@ def main() -> None:
   extract_graphics_modules(linux_virt)
 
   lines = [
+    f"schema={ASSET_SCHEMA}",
     f"repo={REPO}",
     f"release={ALPINE_RELEASE}",
     f"linux-virt={packages['linux-virt']['V']}",

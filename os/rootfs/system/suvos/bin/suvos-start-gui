@@ -1,0 +1,198 @@
+#!/bin/sh
+set -u
+
+find_chromium() {
+  if [ -n "${SUVOS_CHROMIUM_BIN:-}" ] && command -v "$SUVOS_CHROMIUM_BIN" >/dev/null 2>&1; then
+    command -v "$SUVOS_CHROMIUM_BIN"
+    return 0
+  fi
+
+  for candidate in chromium chromium-browser; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      command -v "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+echo "suvos-gui: preparing runtime"
+
+if ! command -v cage >/dev/null 2>&1; then
+  echo "suvos-gui: cage is not installed"
+  exit 1
+fi
+
+CHROMIUM_BIN="$(find_chromium)" || {
+  echo "suvos-gui: chromium is not installed"
+  exit 1
+}
+
+mkdir -p /run/user/0 /data/suvos/chromium /data/suvos/downloads /data/suvos/tmp
+chmod 0700 /run/user/0 /data/suvos/chromium /data/suvos/tmp
+chmod 0755 /data/suvos/downloads
+
+export XDG_RUNTIME_DIR=/run/user/0
+export XDG_CURRENT_DESKTOP=SuvOS
+export XDG_SESSION_TYPE=wayland
+export HOME=/data/suvos/chromium
+export WLR_LIBINPUT_NO_DEVICES="${WLR_LIBINPUT_NO_DEVICES:-1}"
+export WLR_RENDERER_ALLOW_SOFTWARE="${WLR_RENDERER_ALLOW_SOFTWARE:-1}"
+export WLR_NO_HARDWARE_CURSORS="${WLR_NO_HARDWARE_CURSORS:-1}"
+export XCURSOR_THEME="${SUVOS_CURSOR_THEME:-${XCURSOR_THEME:-Adwaita}}"
+export XCURSOR_SIZE="${SUVOS_CURSOR_SIZE:-${XCURSOR_SIZE:-24}}"
+export XCURSOR_PATH="${XCURSOR_PATH:-/usr/share/icons:/usr/share/pixmaps}"
+
+start_udev() {
+  udevd_bin=""
+  for candidate in /sbin/udevd /usr/sbin/udevd udevd; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      udevd_bin="$(command -v "$candidate")"
+      break
+    fi
+  done
+
+  if [ -z "$udevd_bin" ]; then
+    echo "suvos-gui: udev is not installed"
+    return 0
+  fi
+
+  mkdir -p /run/udev
+  "$udevd_bin" --daemon >/tmp/suvos-udevd.log 2>&1 || {
+    echo "suvos-gui: udevd start failed"
+    cat /tmp/suvos-udevd.log 2>/dev/null || true
+    return 0
+  }
+
+  if command -v udevadm >/dev/null 2>&1; then
+    udevadm trigger --action=add >/tmp/suvos-udevadm-trigger.log 2>&1 || \
+      cat /tmp/suvos-udevadm-trigger.log 2>/dev/null || true
+    udevadm settle --timeout=5 >/tmp/suvos-udevadm-settle.log 2>&1 || \
+      cat /tmp/suvos-udevadm-settle.log 2>/dev/null || true
+  fi
+
+  echo "suvos-gui: udev ready"
+}
+
+start_udev
+
+if command -v dbus-daemon >/dev/null 2>&1; then
+  if command -v dbus-uuidgen >/dev/null 2>&1; then
+    dbus-uuidgen --ensure=/etc/machine-id 2>/tmp/suvos-machine-id.err || \
+      cat /tmp/suvos-machine-id.err 2>/dev/null || true
+  fi
+
+  mkdir -p /run/dbus
+  if [ ! -S /run/dbus/system_bus_socket ]; then
+    dbus-daemon --system --fork >/tmp/suvos-dbus-system.log 2>&1 && \
+      echo "suvos-gui: dbus system bus ready" || {
+        echo "suvos-gui: dbus system bus start failed"
+        cat /tmp/suvos-dbus-system.log 2>/dev/null || true
+      }
+  fi
+
+  DBUS_INFO="$(dbus-daemon --session --fork --print-address=1 --print-pid=1 2>/tmp/suvos-dbus.err)" || {
+    echo "suvos-gui: dbus session start failed"
+    cat /tmp/suvos-dbus.err 2>/dev/null || true
+    DBUS_INFO=""
+  }
+  if [ -n "$DBUS_INFO" ]; then
+    DBUS_SESSION_BUS_ADDRESS="$(printf '%s\n' "$DBUS_INFO" | sed -n '1p')"
+    export DBUS_SESSION_BUS_ADDRESS
+    echo "suvos-gui: dbus session ready"
+  fi
+fi
+
+if command -v seatd >/dev/null 2>&1; then
+  seatd -u root -g root -l error >/tmp/suvos-seatd.log 2>&1 &
+  export LIBSEAT_BACKEND=seatd
+  sleep 1
+  echo "suvos-gui: seatd started"
+fi
+
+if [ -d /dev/input ]; then
+  echo "suvos-gui: input devices: $(ls /dev/input 2>/dev/null | tr '\n' ' ')"
+  ls -l /dev/input 2>/dev/null || true
+  if [ -r /proc/bus/input/devices ]; then
+    echo "suvos-gui: input device details begin"
+    sed -n '1,120p' /proc/bus/input/devices
+    echo "suvos-gui: input device details end"
+  fi
+  if command -v libinput >/dev/null 2>&1; then
+    echo "suvos-gui: libinput devices begin"
+    libinput list-devices 2>/tmp/suvos-libinput.err || cat /tmp/suvos-libinput.err 2>/dev/null || true
+    echo "suvos-gui: libinput devices end"
+  elif command -v libinput-list-devices >/dev/null 2>&1; then
+    echo "suvos-gui: libinput devices begin"
+    libinput-list-devices 2>/tmp/suvos-libinput.err || cat /tmp/suvos-libinput.err 2>/dev/null || true
+    echo "suvos-gui: libinput devices end"
+  else
+    echo "suvos-gui: libinput diagnostics command is missing"
+  fi
+else
+  echo "suvos-gui: /dev/input is missing"
+fi
+
+if command -v lspci >/dev/null 2>&1; then
+  echo "suvos-gui: pci devices begin"
+  lspci -nnk 2>/tmp/suvos-lspci.err || cat /tmp/suvos-lspci.err 2>/dev/null || true
+  echo "suvos-gui: pci devices end"
+fi
+
+if [ -r /proc/modules ]; then
+  echo "suvos-gui: loaded gui modules begin"
+  grep -Ei '(^snd|hda|ens137|sound|audio|virtio|hid|xhci|evdev|mousedev|drm)' /proc/modules || true
+  echo "suvos-gui: loaded gui modules end"
+fi
+
+if [ -r /proc/asound/cards ]; then
+  echo "suvos-gui: alsa cards:"
+  cat /proc/asound/cards
+else
+  echo "suvos-gui: alsa cards: none"
+fi
+
+if command -v aplay >/dev/null 2>&1; then
+  aplay -l 2>/tmp/suvos-aplay.err || cat /tmp/suvos-aplay.err 2>/dev/null || true
+fi
+
+if command -v dmesg >/dev/null 2>&1; then
+  echo "suvos-gui: kernel gui diagnostics begin"
+  dmesg | grep -Ei 'snd|hda|ens137|audio|sound|virtio|input|hid|xhci|drm|wayland|cage' | tail -n 160 || true
+  echo "suvos-gui: kernel gui diagnostics end"
+fi
+
+for modes in /sys/class/drm/card*-*/modes; do
+  [ -r "$modes" ] || continue
+  output="${modes%/modes}"
+  echo "suvos-gui: drm modes ${output##*/}: $(tr '\n' ' ' <"$modes")"
+done
+
+SUVOS_GUI_URL="${SUVOS_GUI_URL:-http://127.0.0.1:8080/}"
+SUVOS_CAGE_FLAGS="${SUVOS_CAGE_FLAGS:--d}"
+
+set -- "$CHROMIUM_BIN" \
+  --ozone-platform=wayland \
+  --user-data-dir=/data/suvos/chromium/profile \
+  --no-first-run \
+  --no-default-browser-check \
+  --disable-background-networking \
+  --disable-sync \
+  --disable-dev-shm-usage \
+  --disable-gpu \
+  --disable-accelerated-video-decode \
+  --disable-features=Vulkan,VulkanFromANGLE,VaapiVideoDecodeLinuxGL,VaapiVideoEncoder \
+  --no-sandbox
+
+if [ -n "${SUVOS_CHROMIUM_FLAGS:-}" ]; then
+  # Intentional shell splitting: this variable is a developer boot override.
+  set -- "$@" $SUVOS_CHROMIUM_FLAGS
+fi
+
+set -- "$@" "$SUVOS_GUI_URL"
+
+echo "suvos-gui: starting Cage with Chromium"
+echo "suvos-gui: url=$SUVOS_GUI_URL"
+# Intentional shell splitting: this variable is a developer boot override.
+exec cage $SUVOS_CAGE_FLAGS -- "$@"

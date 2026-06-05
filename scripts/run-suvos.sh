@@ -12,8 +12,10 @@ MACHINE="${SUVOS_MACHINE:-q35}"
 ACCEL="${SUVOS_ACCEL:-tcg}"
 DISPLAY_BACKEND="${SUVOS_DISPLAY:-none}"
 VGA="${SUVOS_VGA:-}"
+VIDEO_DEVICE="${SUVOS_VIDEO_DEVICE:-}"
 SERIAL="${SUVOS_SERIAL:-mon:stdio}"
 APPEND="${SUVOS_APPEND:-console=ttyS0 rdinit=/init quiet loglevel=3 panic=-1}"
+EXTRA_QEMU_ARGS="${SUVOS_EXTRA_QEMU_ARGS:-}"
 
 fail() {
   printf 'error: %s\n' "$*" >&2
@@ -37,8 +39,15 @@ qemu_args=(
   -no-reboot
 )
 
-if [ -n "$VGA" ]; then
+if [ -n "$VIDEO_DEVICE" ]; then
+  qemu_args+=(-device "$VIDEO_DEVICE")
+elif [ -n "$VGA" ]; then
   qemu_args+=(-vga "$VGA")
+fi
+
+if [ -n "$EXTRA_QEMU_ARGS" ]; then
+  # Intentional shell splitting: this is a developer-only QEMU override.
+  qemu_args+=($EXTRA_QEMU_ARGS)
 fi
 
 exec "$QEMU_BIN" "${qemu_args[@]}"

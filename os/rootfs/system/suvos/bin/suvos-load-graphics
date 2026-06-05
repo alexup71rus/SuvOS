@@ -8,7 +8,7 @@ if [ ! -r "$MODULE_ORDER" ]; then
   exit 0
 fi
 
-echo "suvos-graphics: loading framebuffer modules"
+echo "suvos-graphics: loading graphics/input/audio modules"
 
 while IFS= read -r module; do
   [ -n "$module" ] || continue

@@ -14,6 +14,7 @@ SuvOS is currently a minimal x86_64 Linux-based OS prototype:
 - internal Unix socket API at `/run/suvosd/control.sock` for the future HTTP gateway;
 - diagnostic socket client `suvosctl`;
 - framebuffer splash utility `suvos-splash` for the first graphics smoke layer;
+- optional GUI profile with a Wayland/Cage/Chromium browser shell;
 - localhost-only HTTP gateway `suvos-gateway` on `127.0.0.1:8080`;
 - structured JSON endpoints for status, roles, and the app registry;
 - first web UI page served through `suvos-gateway`;
@@ -85,7 +86,49 @@ make run-graphics
 make run-core-graphics
 ```
 
-On macOS, the current Homebrew QEMU opens the window through `-display cocoa`; `make run-graphics` currently uses `std` VGA as the most compatible early mode. In this mode init loads minimal DRM/framebuffer modules, then runs `suvos-splash`, which attempts to fill `/dev/fb0` with a solid color. If the framebuffer is unavailable, boot continues through the serial console and prints diagnostics. The full browser kiosk UI comes later, after the image gains a Wayland/Chromium stack.
+On macOS, the current Homebrew QEMU opens the window through `-display cocoa`; `make run-graphics` currently uses `std` VGA as the most compatible early mode. In this mode init loads minimal DRM/framebuffer modules, then runs `suvos-splash`, which attempts to fill `/dev/fb0` with a solid color. If the framebuffer is unavailable, boot continues through the serial console and prints diagnostics. The full browser shell UI comes later, after the image gains a Wayland/Chromium stack.
+
+The next GUI stage is documented in [SuvOS_CONCEPT.md](SuvOS_CONCEPT.md): Wayland runtime + Cage + ordinary Chromium. For the MVP, Chromium must not run in `--kiosk` or `--app` mode, because the SuvOS shell must keep tabs, the address bar, and extensions UI. Cage is the minimal compositor for one maximized browser window without GNOME/KDE/window manager.
+
+Experimental Chromium shell run:
+
+```sh
+make run-gui
+```
+
+`make run-gui` builds a separate GUI profile with `SUVOS_WITH_GUI=1`, installs Alpine packages for `cage`, `chromium`, `xwayland`, `dbus`, `seatd`, `eudev`, fonts, a cursor theme, ALSA diagnostics, and Mesa/Wayland dependencies, then boots QEMU with `suvos.graphics=1 suvos.gui=1`. This is a heavy profile: Chromium is downloaded and embedded into the initramfs, so it is not used by `make test`. The QEMU GUI profile uses USB HID keyboard/tablet/mouse through `qemu-xhci` by default, CoreAudio + virtio-sound for sound, and starts Cage with `-d` to remove client-side window controls where possible. `eudev` is not a desktop environment dependency; it is the device discovery layer libinput/wlroots needs. Without it, the kernel can expose `/dev/input/event*` while Cage still receives no mouse devices.
+
+The cursor theme is currently a replaceable GUI dependency, not part of SuvOS core logic. The default is Alpine's `adwaita-icon-theme`; it can be replaced like this:
+
+```sh
+SUVOS_CURSOR_THEME_PACKAGE=breeze-icons make run-gui
+```
+
+Chromium still runs as a Wayland client through `--ozone-platform=wayland`. `xwayland` is present only because the current Alpine Cage 0.2.0 package tries to start an XWayland server during boot and fails without `/usr/bin/Xwayland`. This does not mean SuvOS is switching to X11. In the MVP, Chromium runs as root with `--no-sandbox`; this is an early dev compromise until SuvOS gets a proper user/session layer.
+
+The GUI profile startup resolution can be changed without editing scripts:
+
+```sh
+make run-gui SUVOS_GUI_WIDTH=1440 SUVOS_GUI_HEIGHT=900
+make test-gui-smoke SUVOS_GUI_WIDTH=1024 SUVOS_GUI_HEIGHT=768
+```
+
+This sets `virtio-vga,xres=...,yres=...,edid=on`. Live QEMU window resize depends on the QEMU Cocoa -> virtio-gpu -> Linux DRM -> wlroots/Cage path and is currently a separate validation target, not a guaranteed feature.
+
+Input/audio devices can also be overridden:
+
+```sh
+make run-gui SUVOS_GUI_INPUT_DEVICES="-device virtio-keyboard-pci -device virtio-tablet-pci"
+make run-gui SUVOS_GUI_AUDIO_DEVICES="-audiodev coreaudio,id=suvos-audio,out.mixing-engine=on -device virtio-sound-pci,audiodev=suvos-audio,streams=1"
+```
+
+GUI smoke test:
+
+```sh
+make test-gui-smoke
+```
+
+It also builds the GUI profile and opens a QEMU window for a bounded period. The test checks the serial log for Cage/Chromium startup and known Cage/wlroots errors, but it does not visually prove that the browser rendered the page correctly. Manual `make run-gui` is still needed for visual validation.
 
 The build creates an external bootstrap secret:
 
@@ -156,6 +199,8 @@ This first filesystem is initramfs-only. Files created outside the read-only sys
   |     +-- http://127.0.0.1:8080/api/*
   +-- /system/suvos/bin/suvos-splash
   |     +-- optional /dev/fb0 color fill in suvos.graphics=1 mode
+  +-- /system/suvos/bin/suvos-start-gui
+  |     +-- optional Cage + ordinary Chromium shell in suvos.gui=1 mode
   +-- /system/suvos/bin/suvos-shell
         +-- suvos CLI
               +-- /run/suvosd/request

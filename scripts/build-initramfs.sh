@@ -6,6 +6,7 @@ ROOTFS="$ROOT_DIR/build/rootfs"
 INITRAMFS="$ROOT_DIR/build/initramfs/suvos-initramfs.cpio.gz"
 ROOT_BOOTSTRAP_HASH="$("$ROOT_DIR/scripts/generate-root-secret.sh")"
 WITH_RUNTIMES="${SUVOS_WITH_RUNTIMES:-1}"
+WITH_GUI="${SUVOS_WITH_GUI:-0}"
 
 case "$WITH_RUNTIMES" in
   0|1) ;;
@@ -15,7 +16,17 @@ case "$WITH_RUNTIMES" in
     ;;
 esac
 
-if [ "$WITH_RUNTIMES" = "1" ]; then
+case "$WITH_GUI" in
+  0|1) ;;
+  *)
+    echo "SUVOS_WITH_GUI must be 0 or 1" >&2
+    exit 2
+    ;;
+esac
+
+if [ "$WITH_GUI" = "1" ]; then
+  BUILD_PROFILE="${SUVOS_BUILD_PROFILE:-gui}"
+elif [ "$WITH_RUNTIMES" = "1" ]; then
   BUILD_PROFILE="${SUVOS_BUILD_PROFILE:-full}"
 else
   BUILD_PROFILE="${SUVOS_BUILD_PROFILE:-core}"
@@ -34,6 +45,7 @@ ln -sfn /system/suvos "$ROOTFS/opt/suvos"
 cat >"$ROOTFS/system/suvos/config/build.conf" <<EOF
 SUVOS_BUILD_PROFILE=$BUILD_PROFILE
 SUVOS_WITH_RUNTIMES=$WITH_RUNTIMES
+SUVOS_WITH_GUI=$WITH_GUI
 EOF
 
 if [ "$WITH_RUNTIMES" = "1" ]; then
@@ -46,13 +58,17 @@ else
   mv "$ROOTFS/system/suvos/security/roles.conf.core" "$ROOTFS/system/suvos/security/roles.conf"
 fi
 
+if [ "$WITH_GUI" = "1" ]; then
+  "$ROOT_DIR/scripts/install-alpine-gui.sh" "$ROOTFS"
+fi
+
 cp "$ROOT_DIR/build/assets/busybox-x86_64" "$ROOTFS/bin/busybox"
 chmod +x "$ROOTFS/bin/busybox"
 
 for applet in sh ash ls mkdir rmdir pwd cat echo printf touch rm cp mv chmod chown \
   grep sed awk head tail find date clear mount umount dmesg sleep uname reboot \
   poweroff halt id whoami env true false test '[' basename dirname ps kill sync \
-  mkfifo cut tail sort ifconfig wget insmod lsmod rmmod; do
+  mkfifo cut tail sort tee ifconfig wget insmod lsmod rmmod; do
   ln -sf busybox "$ROOTFS/bin/$applet"
 done
 

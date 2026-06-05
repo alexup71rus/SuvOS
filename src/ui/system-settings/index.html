@@ -13,7 +13,15 @@
           <h1>Системные настройки</h1>
           <p id="summary">SuvOS control plane</p>
         </div>
-        <button id="refresh" type="button">Обновить</button>
+        <div class="topbar-actions">
+          <div class="system-strip" aria-label="SuvOS system status">
+            <span id="clock" class="system-item">--:--</span>
+            <span id="notifications" class="system-item">0</span>
+            <span id="network" class="system-item">...</span>
+            <span id="power" class="system-item">...</span>
+          </div>
+          <button id="refresh" type="button">Обновить</button>
+        </div>
       </header>
 
       <section class="grid">
