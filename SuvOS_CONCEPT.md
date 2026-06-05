@@ -345,6 +345,7 @@ poweroff
 
 После стабильного web UI запускаем графику:
 
+- QEMU window launch через `make run-graphics` или `make run-core-graphics`;
 - минимальный Wayland stack;
 - kiosk compositor, например Cage;
 - Chromium в `--kiosk` или `--app` режиме;
@@ -359,6 +360,8 @@ cage -- chromium --ozone-platform=wayland --kiosk http://127.0.0.1:8080
 ```
 
 Это не финальная команда, а направление. Конкретные флаги Chromium будут зависеть от дистрибутива, версии Chromium, Wayland/GPU и требований к sandbox.
+
+Локально установленный Homebrew QEMU `11.0.1` для x86_64 на Mac M сейчас поддерживает display backends `none`, `curses`, `cocoa`, `dbus` и accelerator только `tcg`. Для первого графического этапа этого достаточно: QEMU умеет открыть окно через `cocoa`. Vulkan/GPU acceleration не стоит делать условием первого UI: сначала нужен framebuffer/splash или software-rendered Wayland/Chromium, а Vulkan/virgl/venus лучше проверять отдельной итерацией и, вероятно, на Linux host или другой QEMU-сборке с GPU acceleration.
 
 ## Подводные камни
 
@@ -427,6 +430,15 @@ scripts/run-qemu.sh
 ```
 
 Запускает будущий образ `build/suvos-x86_64.qcow2`. Пока образа нет, скрипт покажет команду для создания пустого qcow2-диска. Пустой диск не загрузится сам по себе; дальше нужно будет либо установить туда минимальную Linux-систему, либо собрать собственный bootable image.
+
+Для текущего initramfs-прототипа используются:
+
+```sh
+make run
+make run-graphics
+```
+
+`make run` оставляет headless serial console, `make run-graphics` запускает тот же initramfs в окне QEMU через `-display cocoa` и совместимый `std` VGA. Для экспериментов с virtio-графикой можно переопределить `SUVOS_VGA=virtio`.
 
 ## Использованные ориентиры
 

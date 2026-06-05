@@ -8,6 +8,11 @@ INITRD="${SUVOS_INITRD:-$ROOT_DIR/build/initramfs/suvos-initramfs.cpio.gz}"
 MEMORY="${SUVOS_MEMORY:-1024M}"
 CPUS="${SUVOS_CPUS:-1}"
 CPU_MODEL="${SUVOS_CPU_MODEL:-max}"
+MACHINE="${SUVOS_MACHINE:-q35}"
+ACCEL="${SUVOS_ACCEL:-tcg}"
+DISPLAY_BACKEND="${SUVOS_DISPLAY:-none}"
+VGA="${SUVOS_VGA:-}"
+SERIAL="${SUVOS_SERIAL:-mon:stdio}"
 APPEND="${SUVOS_APPEND:-console=ttyS0 rdinit=/init quiet loglevel=3 panic=-1}"
 
 fail() {
@@ -19,14 +24,21 @@ fail() {
 [ -f "$KERNEL" ] || fail "missing kernel: $KERNEL. Run: make"
 [ -f "$INITRD" ] || fail "missing initramfs: $INITRD. Run: make"
 
-exec "$QEMU_BIN" \
-  -machine q35,accel=tcg \
-  -cpu "$CPU_MODEL" \
-  -m "$MEMORY" \
-  -smp "$CPUS" \
-  -kernel "$KERNEL" \
-  -initrd "$INITRD" \
-  -append "$APPEND" \
-  -display none \
-  -serial mon:stdio \
+qemu_args=(
+  -machine "$MACHINE,accel=$ACCEL"
+  -cpu "$CPU_MODEL"
+  -m "$MEMORY"
+  -smp "$CPUS"
+  -kernel "$KERNEL"
+  -initrd "$INITRD"
+  -append "$APPEND"
+  -display "$DISPLAY_BACKEND"
+  -serial "$SERIAL"
   -no-reboot
+)
+
+if [ -n "$VGA" ]; then
+  qemu_args+=(-vga "$VGA")
+fi
+
+exec "$QEMU_BIN" "${qemu_args[@]}"

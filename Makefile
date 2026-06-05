@@ -1,4 +1,4 @@
-.PHONY: all assets initramfs initramfs-core cpp suvosd suvosctl suvos-gateway run run-core test test-core test-full clean distclean
+.PHONY: all assets initramfs initramfs-core cpp suvosd suvosctl suvos-gateway run run-core run-graphics run-core-graphics test test-core test-full clean distclean
 
 all: initramfs
 
@@ -28,6 +28,12 @@ run: all
 
 run-core: initramfs-core
 	scripts/run-suvos.sh
+
+run-graphics: all
+	SUVOS_DISPLAY=cocoa SUVOS_VGA=std SUVOS_APPEND="console=tty0 rdinit=/init quiet loglevel=3 panic=-1 suvos.graphics=1" scripts/run-suvos.sh
+
+run-core-graphics: initramfs-core
+	SUVOS_DISPLAY=cocoa SUVOS_VGA=std SUVOS_APPEND="console=tty0 rdinit=/init quiet loglevel=3 panic=-1 suvos.graphics=1" scripts/run-suvos.sh
 
 test: test-core
 

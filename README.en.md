@@ -61,6 +61,15 @@ Fast manual run without Python/Node:
 make run-core
 ```
 
+Manual run in a QEMU window:
+
+```sh
+make run-graphics
+make run-core-graphics
+```
+
+On macOS, the current Homebrew QEMU opens the window through `-display cocoa`; `make run-graphics` currently uses `std` VGA as the most compatible early mode. This mode is for framebuffer/graphics experiments for now; the full browser kiosk UI comes later, after the image gains a Wayland/Chromium stack.
+
 The build creates an external bootstrap secret:
 
 ```text
@@ -79,6 +88,12 @@ This file is not included in the initramfs and is ignored by git. The image only
 
 ```sh
 make run
+```
+
+To run with a window instead of the headless serial console:
+
+```sh
+make run-graphics
 ```
 
 Inside the console:

@@ -61,6 +61,15 @@ make test-full
 make run-core
 ```
 
+Ручной запуск в окне QEMU:
+
+```sh
+make run-graphics
+make run-core-graphics
+```
+
+На macOS текущий Homebrew QEMU открывает окно через `-display cocoa`; `make run-graphics` пока использует `std` VGA как самый совместимый ранний режим. Этот режим нужен для framebuffer/графических экспериментов; полноценный браузерный kiosk UI появится позже, когда в образ будет добавлен Wayland/Chromium stack.
+
 Сборка создает внешний bootstrap-secret:
 
 ```text
@@ -79,6 +88,12 @@ build/secrets/root-bootstrap.secret
 
 ```sh
 make run
+```
+
+Для запуска с окном вместо headless serial console:
+
+```sh
+make run-graphics
 ```
 
 Внутри консоли:

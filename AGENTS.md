@@ -66,6 +66,13 @@ Fast manual run without Python/Node runtime packages:
 make run-core
 ```
 
+Manual graphics-window run:
+
+```sh
+make run-graphics
+make run-core-graphics
+```
+
 ## Git
 
 - Keep commits small enough to review.
