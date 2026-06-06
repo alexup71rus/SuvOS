@@ -15,7 +15,7 @@ SuvOS is currently a minimal x86_64 Linux-based OS prototype:
 - diagnostic socket client `suvosctl`;
 - framebuffer splash utility `suvos-splash` for the first graphics smoke layer;
 - optional GUI profile with a Wayland/Cage/Chromium browser shell;
-- localhost-only HTTP gateway `suvos-gateway` on `127.0.0.1:8080`;
+- localhost-only HTTP gateway `suvos-gateway` on `http://suv.os/`;
 - structured JSON endpoints for status, roles, and the app registry;
 - first web UI page served through `suvos-gateway`;
 - app manifests at `/system/suvos/apps/manifest.d/*.app`;
@@ -202,11 +202,11 @@ suvosctl ping
 suvosctl status
 suvosctl list
 suvosctl run hello
-wget -q -O - http://127.0.0.1:8080/api/status
-wget -q -O - http://127.0.0.1:8080/api/roles
-wget -q -O - http://127.0.0.1:8080/api/apps
-wget -q -O - 'http://127.0.0.1:8080/api/run?name=hello'
-wget -q -O - http://127.0.0.1:8080/
+wget -q -O - http://suv.os/api/status
+wget -q -O - http://suv.os/api/roles
+wget -q -O - http://suv.os/api/apps
+wget -q -O - 'http://suv.os/api/run?name=hello'
+wget -q -O - http://suv.os/
 suvos run py-hello
 suvos run node-hello
 python3 --version
@@ -225,7 +225,7 @@ This first filesystem is initramfs-only. Files created outside the read-only sys
   |     +-- /run/suvosd/control.sock
   +-- /system/suvos/bin/suvosctl
   +-- /system/suvos/bin/suvos-gateway
-  |     +-- http://127.0.0.1:8080/api/*
+  |     +-- http://suv.os/api/*
   +-- /system/suvos/bin/suvos-splash
   |     +-- optional /dev/fb0 loader/crash screen in suvos.graphics=1 mode
   +-- /system/suvos/bin/suvos-start-gui
@@ -240,7 +240,7 @@ This first filesystem is initramfs-only. Files created outside the read-only sys
 
 `suvosctl` is a diagnostic client for the internal Unix socket API. The main interactive CLI remains `suvos`; the future HTTP gateway should call `/run/suvosd/control.sock` the same way `suvosctl` does.
 
-`suvos-gateway` is the first HTTP boundary for the future web UI. It listens only on `127.0.0.1:8080`, serves the built UI dist from `/system/suvos/ui`, returns JSON, and proxies commands into `suvosd` through the Unix socket. `/api/status`, `/api/roles`, and `/api/apps` return structured JSON objects for the UI; `/api/run?name=<app>` remains a command endpoint and returns `exitCode` plus `output`. Current endpoints: `/`, `/ui/app.js`, `/ui/styles.css`, `/health`, `/api/status`, `/api/roles`, `/api/apps`, `/api/run?name=<app>`. The next security step is a browser UI session token before adding state-changing browser actions.
+`suvos-gateway` is the first HTTP boundary for the future web UI. It listens on loopback-only `127.0.0.1:80`, while guest `/etc/hosts` maps `suv.os` to `127.0.0.1`. The gateway serves the built UI dist from `/system/suvos/ui`, returns JSON, and proxies commands into `suvosd` through the Unix socket. `/api/status`, `/api/roles`, and `/api/apps` return structured JSON objects for the UI; `/api/run?name=<app>` remains a command endpoint and returns `exitCode` plus `output`. Current endpoints: `http://suv.os/`, `/ui/app.js`, `/ui/styles.css`, `/health`, `/api/status`, `/api/roles`, `/api/apps`, `/api/run?name=<app>`. The next security step is a browser UI session token before adding state-changing browser actions.
 
 SuvOS-owned files live under:
 

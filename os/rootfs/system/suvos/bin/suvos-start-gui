@@ -231,7 +231,7 @@ for modes in /sys/class/drm/card*-*/modes; do
   echo "suvos-gui: drm modes ${output##*/}: $(tr '\n' ' ' <"$modes")"
 done
 
-SUVOS_GUI_URL="${SUVOS_GUI_URL:-http://127.0.0.1:8080/}"
+SUVOS_GUI_URL="${SUVOS_GUI_URL:-http://suv.os/}"
 SUVOS_CAGE_FLAGS="${SUVOS_CAGE_FLAGS:--d}"
 SUVOS_RENDER_PROFILE="${SUVOS_RENDER_PROFILE:-$(cmdline_value suvos.render)}"
 [ -n "$SUVOS_RENDER_PROFILE" ] || SUVOS_RENDER_PROFILE=hardware

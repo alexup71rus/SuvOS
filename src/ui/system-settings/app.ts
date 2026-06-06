@@ -36,33 +36,11 @@ interface RolesResponse extends ApiBaseResponse {
   userCreation: string;
 }
 
-interface AppManifest {
-  capability: string;
-  description: string;
-  name: string;
-  runtime: string;
-  uiEntry: string;
-  version: string;
-}
-
-interface AppsResponse extends ApiBaseResponse {
-  apps: AppManifest[];
-}
-
-interface RunResponse extends ApiBaseResponse {
-  exitCode: number;
-  output: string;
-}
-
 interface ErrorResponse {
   error?: string;
   ok?: boolean;
   output?: string;
 }
-
-const state: { apps: AppManifest[] } = {
-  apps: [],
-};
 
 const labels = {
   ru: {
@@ -138,14 +116,10 @@ const labels = {
 type LabelKey = keyof (typeof labels)["ru"];
 
 const el = {
-  apps: requiredElement<HTMLDivElement>("#apps"),
-  appsCount: requiredElement<HTMLSpanElement>("#apps-count"),
-  clearOutput: requiredElement<HTMLButtonElement>("#clear-output"),
   clock: requiredElement<HTMLSpanElement>("#clock"),
   health: requiredElement<HTMLSpanElement>("#health"),
   network: requiredElement<HTMLSpanElement>("#network"),
   notifications: requiredElement<HTMLSpanElement>("#notifications"),
-  output: requiredElement<HTMLPreElement>("#command-output"),
   power: requiredElement<HTMLSpanElement>("#power"),
   refresh: requiredElement<HTMLButtonElement>("#refresh"),
   roleName: requiredElement<HTMLSpanElement>("#role-name"),
@@ -177,11 +151,6 @@ function installCloseGuard(): void {
     event.preventDefault();
     event.returnValue = "";
   });
-}
-
-function setOutput(text: string, isError = false): void {
-  el.output.textContent = text;
-  el.output.classList.toggle("error", isError);
 }
 
 function uiLanguage(value: string): Language {
@@ -240,79 +209,41 @@ function formatRoles(roles: RolesResponse, language: Language): string {
   ].join("\n");
 }
 
-function renderApps(): void {
-  el.appsCount.textContent = String(state.apps.length);
-  el.apps.replaceChildren();
-
-  for (const app of state.apps) {
-    const row = document.createElement("div");
-    row.className = "app-row";
-
-    const meta = document.createElement("div");
-    const name = document.createElement("div");
-    name.className = "app-name";
-    name.textContent = app.name;
-    const desc = document.createElement("div");
-    desc.className = "app-desc";
-    desc.textContent = app.description;
-    meta.append(name, desc);
-
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "primary";
-    button.textContent = "Запуск";
-    button.addEventListener("click", () => {
-      void runApp(app.name);
-    });
-
-    row.append(meta, button);
-    el.apps.append(row);
-  }
+function renderError(message: string): void {
+  el.status.textContent = message;
+  el.status.classList.add("error");
+  el.roles.textContent = message;
+  el.roles.classList.add("error");
+  el.roleName.textContent = "...";
 }
 
 async function refresh(): Promise<void> {
   el.health.textContent = "...";
+  el.status.classList.remove("error");
+  el.roles.classList.remove("error");
   try {
-    const [health, status, roles, apps] = await Promise.all([
+    const [health, status, roles] = await Promise.all([
       api<HealthResponse>("/health"),
       api<StatusResponse>("/api/status"),
       api<RolesResponse>("/api/roles"),
-      api<AppsResponse>("/api/apps"),
     ]);
 
     const language = uiLanguage(status.language);
     document.documentElement.lang = language;
     renderSystemStrip(language);
     el.health.textContent = health.ok ? "online" : "error";
-    el.summary.textContent = `${health.service} · 127.0.0.1:8080`;
+    el.summary.textContent = `${health.service} · ${window.location.host}`;
     el.status.textContent = formatStatus(status);
     el.roles.textContent = formatRoles(roles, language);
     el.roleName.textContent = roles.currentRole || "...";
-    state.apps = apps.apps.filter((app) => app.uiEntry !== "internal");
-    renderApps();
   } catch (error) {
     el.health.textContent = "error";
-    setOutput(error instanceof Error ? error.message : String(error), true);
-  }
-}
-
-async function runApp(name: string): Promise<void> {
-  setOutput(`$ ${name}\n...`);
-  try {
-    const result = await api<RunResponse>(
-      `/api/run?name=${encodeURIComponent(name)}`,
-    );
-    setOutput(result.output);
-  } catch (error) {
-    setOutput(error instanceof Error ? error.message : String(error), true);
+    renderError(error instanceof Error ? error.message : String(error));
   }
 }
 
 el.refresh.addEventListener("click", () => {
   void refresh();
-});
-el.clearOutput.addEventListener("click", () => {
-  setOutput("");
 });
 
 installCloseGuard();

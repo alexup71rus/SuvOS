@@ -261,8 +261,8 @@ suvos status
 - `suvos` CLI общается с `suvosd` через FIFO IPC в `/run/suvosd`;
 - внутренний control API доступен как Unix socket `/run/suvosd/control.sock`;
 - `suvosctl` проверяет Unix socket API и служит диагностическим клиентом для будущего HTTP gateway;
-- `suvos-gateway` слушает `127.0.0.1:8080` и проксирует HTTP JSON API в `/run/suvosd/control.sock`;
-- первая web UI лежит в `/system/suvos/ui` и открывается через `http://127.0.0.1:8080/`;
+- `suvos-gateway` слушает loopback-only `127.0.0.1:80`, а guest `/etc/hosts` мапит `suv.os` на `127.0.0.1`;
+- первая web UI лежит в `/system/suvos/ui` и открывается через `http://suv.os/`;
 - `/api/status`, `/api/roles` и `/api/apps` возвращают структурированный JSON, чтобы UI не парсил локализованный CLI-текст;
 - `/api/run?name=<app>` остается command endpoint с `exitCode` и `output`;
 - `suvos.graphics=1` режим загружает минимальные DRM/framebuffer modules, затем `suvos-splash` проверяет `/dev/fb0` и рисует framebuffer boot-loader/status screen;
@@ -361,7 +361,7 @@ Linux kernel
 MVP launch model:
 
 ```sh
-cage -- chromium --ozone-platform=wayland --user-data-dir=/data/suvos/chromium --no-first-run http://127.0.0.1:8080/
+cage -- chromium --ozone-platform=wayland --user-data-dir=/data/suvos/chromium --no-first-run http://suv.os/
 ```
 
 Важное решение: для основного SuvOS shell не использовать Chromium `--kiosk` или `--app`. Эти режимы полезны для locked-down appliance screen, но конфликтуют с требованием сохранить вкладки, адресную строку, extensions UI и обычную браузерную механику. В SuvOS "fullscreen" означает, что Cage показывает единственное окно Chromium на весь экран без desktop environment, taskbar и стандартной оконной модели. Это не browser fullscreen mode.
@@ -388,7 +388,7 @@ Cage подходит для первого GUI-этапа, потому что 
 
 MVP-модель:
 
-- стартовая вкладка открывает `http://127.0.0.1:8080/`;
+- стартовая вкладка открывает `http://suv.os/`;
 - settings dashboard обслуживается `suvos-gateway`;
 - UI общается только с `suvos-gateway`;
 - `suvos-gateway` общается с `suvosd` через Unix socket `/run/suvosd/control.sock`;
@@ -474,7 +474,7 @@ Phase C: Chromium patch.
 Ориентировочный запуск:
 
 ```sh
-cage -- chromium --ozone-platform=wayland --user-data-dir=/data/suvos/chromium --no-first-run http://127.0.0.1:8080/
+cage -- chromium --ozone-platform=wayland --user-data-dir=/data/suvos/chromium --no-first-run http://suv.os/
 ```
 
 Это не финальная команда, а направление. В реальном init flow запуск идет через root-supervisor и `su-exec suvos-browser ...`; конкретные флаги Chromium зависят от дистрибутива, версии Chromium, Wayland/GPU, sandbox и profile/policy strategy. Важная граница MVP: не использовать `--kiosk`/`--app`, пока сохраняются требования к обычным вкладкам, адресной строке и extensions UI.

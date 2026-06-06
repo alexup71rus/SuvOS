@@ -11,6 +11,7 @@
 #include <sstream>
 #include <string>
 #include <sys/socket.h>
+#include <sys/select.h>
 #include <sys/time.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -21,7 +22,7 @@ namespace {
 constexpr const char *kSuvosdSocket = "/run/suvosd/control.sock";
 constexpr const char *kUiRoot = "/system/suvos/ui";
 constexpr const char *kBindAddress = "127.0.0.1";
-constexpr int kPort = 8080;
+constexpr int kPort = 80;
 constexpr const char *kExitPrefix = "__SUVOSD_EXIT__:";
 constexpr size_t kMaxHttpRequestBytes = 8192;
 constexpr size_t kMaxSuvosdResponseBytes = 1024 * 1024;
@@ -405,7 +406,7 @@ void handleClient(int fd) {
   sendJson(fd, 404, "Not Found", "{\"ok\":false,\"error\":\"not_found\"}\n");
 }
 
-int createServer() {
+int createServer(int port) {
   int server = socket(AF_INET, SOCK_STREAM, 0);
   if (server < 0) {
     std::cerr << "suvos-gateway: socket failed: " << strerror(errno) << "\n";
@@ -417,24 +418,25 @@ int createServer() {
 
   sockaddr_in addr {};
   addr.sin_family = AF_INET;
-  addr.sin_port = htons(kPort);
+  addr.sin_port = htons(port);
   if (inet_pton(AF_INET, kBindAddress, &addr.sin_addr) != 1) {
     close(server);
     return -1;
   }
 
   if (bind(server, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0) {
-    std::cerr << "suvos-gateway: bind failed: " << strerror(errno) << "\n";
+    std::cerr << "suvos-gateway: bind failed on " << kBindAddress << ":" << port << ": " << strerror(errno) << "\n";
     close(server);
     return -1;
   }
 
   if (listen(server, 16) != 0) {
-    std::cerr << "suvos-gateway: listen failed: " << strerror(errno) << "\n";
+    std::cerr << "suvos-gateway: listen failed on " << kBindAddress << ":" << port << ": " << strerror(errno) << "\n";
     close(server);
     return -1;
   }
 
+  std::cerr << "suvos-gateway: listening on " << kBindAddress << ":" << port << "\n";
   return server;
 }
 
@@ -443,14 +445,18 @@ int createServer() {
 int main() {
   signal(SIGPIPE, SIG_IGN);
 
-  int server = createServer();
+  int server = createServer(kPort);
   if (server < 0) {
     return 1;
   }
 
   while (true) {
-    int client = accept(server, nullptr, nullptr);
-    if (client < 0) {
+    fd_set readSet;
+    FD_ZERO(&readSet);
+    FD_SET(server, &readSet);
+
+    int ready = select(server + 1, &readSet, nullptr, nullptr, nullptr);
+    if (ready < 0) {
       if (errno == EINTR) {
         continue;
       }
@@ -458,6 +464,14 @@ int main() {
       continue;
     }
 
+    if (!FD_ISSET(server, &readSet)) {
+      continue;
+    }
+
+    int client = accept(server, nullptr, nullptr);
+    if (client < 0) {
+      continue;
+    }
     handleClient(client);
     close(client);
   }

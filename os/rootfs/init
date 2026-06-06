@@ -79,7 +79,7 @@ ifconfig lo 127.0.0.1 up 2>/tmp/suvos-lo.err || true
 /system/suvos/bin/suvos-gateway &
 
 for _ in 1 2 3 4 5; do
-  wget -q -O /tmp/suvos-gateway-health http://127.0.0.1:8080/health >/dev/null 2>&1 && break
+  wget -q -O /tmp/suvos-gateway-health http://suv.os/health >/dev/null 2>&1 && break
   sleep 1
 done
 
