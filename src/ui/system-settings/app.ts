@@ -172,6 +172,13 @@ async function api<T extends ApiBaseResponse>(path: string): Promise<T> {
   return data;
 }
 
+function installCloseGuard(): void {
+  window.addEventListener("beforeunload", (event) => {
+    event.preventDefault();
+    event.returnValue = "";
+  });
+}
+
 function setOutput(text: string, isError = false): void {
   el.output.textContent = text;
   el.output.classList.toggle("error", isError);
@@ -281,7 +288,7 @@ async function refresh(): Promise<void> {
     el.status.textContent = formatStatus(status);
     el.roles.textContent = formatRoles(roles, language);
     el.roleName.textContent = roles.currentRole || "...";
-    state.apps = apps.apps;
+    state.apps = apps.apps.filter((app) => app.uiEntry !== "internal");
     renderApps();
   } catch (error) {
     el.health.textContent = "error";
@@ -308,6 +315,7 @@ el.clearOutput.addEventListener("click", () => {
   setOutput("");
 });
 
+installCloseGuard();
 void refresh();
 window.setInterval(() => {
   updateClock();

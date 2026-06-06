@@ -61,7 +61,7 @@ make_system_readonly
 if grep -qw 'suvos.graphics=1' /proc/cmdline 2>/dev/null; then
   /system/suvos/bin/suvos-load-graphics >/tmp/suvos-graphics.log 2>&1 || true
   cat /tmp/suvos-graphics.log >/dev/console 2>/dev/null || true
-  /system/suvos/bin/suvos-splash --color '#116149' >/tmp/suvos-splash.log 2>&1 || true
+  /system/suvos/bin/suvos-splash --mode loader --message 'STARTING SUVOS' >/tmp/suvos-splash.log 2>&1 || true
   cat /tmp/suvos-splash.log >/dev/console 2>/dev/null || true
 fi
 
@@ -90,8 +90,48 @@ fi
 
 if grep -qw 'suvos.gui=1' /proc/cmdline 2>/dev/null; then
   echo "[init] starting SuvOS browser shell" >/dev/console
-  /system/suvos/bin/suvos-start-gui 2>&1 | tee /tmp/suvos-gui.log
-  echo "[init] SuvOS browser shell exited; falling back to console" >/dev/console
+  gui_restart_limit=3
+  gui_restart_window_seconds=60
+  gui_restart_count=0
+  gui_restart_window_start=0
+
+  while true; do
+    if [ "$gui_restart_count" -eq 0 ]; then
+      /system/suvos/bin/suvos-splash --mode loader --message 'STARTING BROWSER' >/tmp/suvos-splash.log 2>&1 || true
+    else
+      /system/suvos/bin/suvos-splash --mode loader --message "RESTARTING BROWSER $gui_restart_count/$gui_restart_limit" >/tmp/suvos-splash.log 2>&1 || true
+    fi
+
+    /system/suvos/bin/suvos-start-gui 2>&1 | tee /tmp/suvos-gui.log
+
+    now="$(date +%s 2>/dev/null || echo 0)"
+    case "$now" in
+      ''|*[!0-9]*)
+        if [ "$gui_restart_window_start" -gt 0 ]; then
+          now=$((gui_restart_window_start + 1))
+        else
+          now=1
+        fi
+        ;;
+    esac
+
+    if [ "$gui_restart_window_start" -eq 0 ] || [ $((now - gui_restart_window_start)) -ge "$gui_restart_window_seconds" ]; then
+      gui_restart_window_start="$now"
+      gui_restart_count=0
+    fi
+
+    gui_restart_count=$((gui_restart_count + 1))
+    if [ "$gui_restart_count" -gt "$gui_restart_limit" ]; then
+      echo "[init] SuvOS browser shell restart limit reached; falling back to console" >/dev/console
+      /system/suvos/bin/suvos-splash --mode crash --message 'BROWSER RESTART LIMIT' >/tmp/suvos-splash.log 2>&1 || true
+      break
+    fi
+
+    echo "[init] SuvOS browser shell exited; restarting ($gui_restart_count/$gui_restart_limit)" >/dev/console
+    sleep 1
+  done
+elif grep -qw 'suvos.graphics=1' /proc/cmdline 2>/dev/null; then
+  /system/suvos/bin/suvos-splash --mode loader --message 'SERIAL CONSOLE ACTIVE' >/tmp/suvos-splash.log 2>&1 || true
 fi
 
 exec /system/suvos/bin/suvos-shell

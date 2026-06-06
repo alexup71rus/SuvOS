@@ -265,7 +265,7 @@ suvos status
 - первая web UI лежит в `/system/suvos/ui` и открывается через `http://127.0.0.1:8080/`;
 - `/api/status`, `/api/roles` и `/api/apps` возвращают структурированный JSON, чтобы UI не парсил локализованный CLI-текст;
 - `/api/run?name=<app>` остается command endpoint с `exitCode` и `output`;
-- `suvos.graphics=1` режим загружает минимальные DRM/framebuffer modules, затем `suvos-splash` проверяет `/dev/fb0` и пытается залить framebuffer сплошным цветом;
+- `suvos.graphics=1` режим загружает минимальные DRM/framebuffer modules, затем `suvos-splash` проверяет `/dev/fb0` и рисует framebuffer boot-loader/status screen;
 - `suvos.gui=1` режим запускает экспериментальный browser shell через `suvos-start-gui`: Cage + обычный Chromium;
 - `suvosd` выполняет `status`, `roles`, `list`, `run`;
 - `suvosd run` запускает только приложения из `/system/suvos/apps/manifest.d/*.app`, а имена с `/` и `..` блокируются;
@@ -372,9 +372,9 @@ cage -- chromium --ozone-platform=wayland --user-data-dir=/data/suvos/chromium -
 
 Root остается только supervisor'ом для подготовки `udev`, `dbus`, `seatd`, `/run/user/1000` и writable browser state. Cage и Chromium запускаются через `su-exec` под системным пользователем `suvos-browser` с UID/GID 1000 и группами `video`, `input`, `audio`. `--no-sandbox` не является default-флагом; он допускается только как явный dev escape через `suvos.allow_no_sandbox=1` или `SUVOS_CHROMIUM_ALLOW_NO_SANDBOX=1`.
 
-Разрешение GUI-профиля задается на старте через QEMU `virtio-vga,xres=...,yres=...,edid=on`. `make run-gui` на macOS выбирает размер примерно в 90% от logical-размера основного дисплея, с верхним clamp около 2K, чтобы окно было крупным, но framebuffer не становился чрезмерно тяжелым. Это остается параметризуемым через `SUVOS_GUI_WIDTH=... SUVOS_GUI_HEIGHT=...`; `make test-gui-resolutions` проверяет 1024x768 и 1440x900. Полноценный live resize окна нужно проверять отдельно: он зависит не от web UI, а от цепочки QEMU Cocoa -> virtio-gpu -> Linux DRM -> wlroots/Cage.
+Разрешение GUI-профиля задается на старте через QEMU `virtio-vga,xres=...,yres=...,edid=on` и kernel mode-setting параметр `video=Virtual-1:...-32`. Первый параметр объявляет режим guest DRM, второй заставляет guest реально стартовать в этом размере, а не оставаться на маленьком fallback `720x400`. `make run-gui` на macOS выбирает размер примерно в 90% от logical-размера основного дисплея, с верхним clamp около 2K, чтобы окно было крупным, но framebuffer не становился чрезмерно тяжелым. Это остается параметризуемым через `SUVOS_GUI_WIDTH=... SUVOS_GUI_HEIGHT=...`; `make test-gui-resolutions` проверяет 1024x768 и 1440x900. Полноценный live resize окна нужно проверять отдельно: он зависит не от web UI, а от цепочки QEMU Cocoa -> virtio-gpu -> Linux DRM -> wlroots/Cage.
 
-Render profile задается через `suvos.render=<profile>`. Default без параметра - `hardware`, чтобы реальный device path не был искусственно ограничен software rendering. QEMU Cocoa/TCG dev path использует `qemu-tcg`: Chromium запускается с ANGLE `gl-egl` и Mesa llvmpipe, а Vulkan/VAAPI отключены. Fatal `GLDisplayEGL`, SwANGLE/Vulkan и GPU-process initialization failures не считаются допустимым шумом: они означают, что browser shell может остаться за зеленым splash-экраном.
+Render profile задается через `suvos.render=<profile>`. Default без параметра - `hardware`, чтобы реальный device path не был искусственно ограничен software rendering. QEMU Cocoa/TCG dev path использует `qemu-tcg`: Chromium запускается с ANGLE `gl-egl` и Mesa llvmpipe, а Vulkan/VAAPI отключены. Fatal `GLDisplayEGL`, SwANGLE/Vulkan и GPU-process initialization failures не считаются допустимым шумом: они означают, что browser shell может остаться на loader или перейти в restart/fallback path.
 
 Cursor theme, QEMU input devices и audio backend относятся к заменяемому GUI runtime layer. Они не должны становиться частью core-логики SuvOS. Текущий default: Alpine cursor package, USB HID keyboard/tablet/mouse через `qemu-xhci`, CoreAudio + virtio-sound на macOS host. Для input discovery нужен `eudev`: kernel modules создают `/dev/input/*`, а udev metadata позволяет libinput/wlroots/Cage увидеть эти устройства как usable seat devices.
 
@@ -393,6 +393,9 @@ MVP-модель:
 - UI общается только с `suvos-gateway`;
 - `suvos-gateway` общается с `suvosd` через Unix socket `/run/suvosd/control.sock`;
 - все системные действия проверяются через role/capability policy;
+- close guard для стартовой settings tab сейчас ограничен web-level `beforeunload` warning, но на него нельзя полагаться для browser `X`;
+- выход или crash browser shell считается recoverable failure: `/init` перезапускает Cage/Chromium до 3 раз за 60 секунд, затем показывает зеленый crash/fallback screen;
+- подтвержденный shutdown-flow должен идти через Chromium patchset или privileged internal page;
 - notification feed, network placeholder, power placeholder, logs и apps остаются web-разделами settings UI.
 
 Более глубокая модель:
@@ -411,10 +414,12 @@ MVP-модель:
 - открывать SuvOS settings как обычную web tab;
 - настроить profile dir, default homepage, startup URL и базовые policies;
 - сделать web-based file manager/picker для SuvOS settings;
+- поставить best-effort `beforeunload` warning для стартовой системной вкладки;
 - ограничить backend API ролями и capabilities.
 
 Без форка Chromium нельзя полноценно:
 
+- надежно превратить browser `X` в системную power-кнопку для всех вкладок, страниц и crash-paths;
 - встроить постоянную системную панель в сам browser chrome;
 - заменить все native dialogs для `<input type="file">`, downloads и chooser flows;
 - гарантированно контролировать все download/open/save paths на уровне browser UI;
@@ -423,6 +428,7 @@ MVP-модель:
 С patchset Chromium нужно проектировать:
 
 - custom top system area;
+- close button / window control patch: confirmation UI, shutdown handoff и crash-safe behavior внутри browser chrome;
 - SuvOS settings как privileged internal page;
 - policy-aware file picker для `<input type="file">`;
 - download target enforcement;
@@ -534,14 +540,15 @@ Linux kernel - GPL. Chromium, Node.js, Python и остальные пакеты
 
 MVP GUI boot:
 
-- boot -> green splash -> Cage -> Chromium fullscreen window;
+- boot -> framebuffer loader -> Cage -> Chromium fullscreen window;
 - Cage/Chromium работают под `suvos-browser`, а не под root;
 - default GUI boot не содержит `--no-sandbox`;
+- browser shell перезапускается до 3 раз за 60 секунд перед fallback;
 - tabs, address bar и extensions UI видимы;
 - browser window controls скрыты там, где это позволяет `cage -d` и Chromium/Wayland decoration protocol;
 - нет GNOME/KDE/session manager processes;
-- startup resolution проверяется автоматически, live resize остается manual/hardware validation;
-- GUI smoke делает QEMU screendump и не должен принимать зеленый splash как успешный browser shell;
+- startup resolution проверяется автоматически по DRM modes и QEMU screendump size, live resize остается manual/hardware validation;
+- GUI smoke делает QEMU screendump и не должен принимать loader или зеленый crash/fallback screen как успешный browser shell;
 - serial/recovery path остается доступен.
 
 Settings/API:

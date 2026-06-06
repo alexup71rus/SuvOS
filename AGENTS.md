@@ -45,6 +45,7 @@ Use Russian for user-facing explanations unless the user asks otherwise. Code id
 - If graphics behavior changes, keep the boot resilient when `/dev/fb0` is unavailable and report diagnostics over serial.
 - Root/bootstrap auth must keep the secret outside the image; the image may contain only verification material such as a hash.
 - Apps must be declared in `/system/suvos/apps/manifest.d/*.app`.
+- Internal system actions may use app manifests with `ui_entry=internal`; keep them hidden from the settings app list and give them explicit capabilities.
 - Runtime files may be shell/Python/Node during prototyping, but privileged logic belongs in `suvosd` or another compiled system component.
 - Keep localization wired through `SUVOS_LANG`; currently supported values are `ru` and `en`.
 
@@ -101,11 +102,13 @@ make test-gui-smoke
 make test-gui-resolutions
 ```
 
-`make run-gui` and `make test-gui-smoke` are intentionally heavier than the normal tests because they embed Chromium into the initramfs. Do not use them as the default verification path unless the change touches the browser shell boot flow. `make test-gui-smoke` opens a QEMU window briefly, validates serial-log startup health, and captures a QEMU screendump to reject the green splash screen as a false positive. Manual validation is still needed for interaction quality.
+`make run-gui` and `make test-gui-smoke` are intentionally heavier than the normal tests because they embed Chromium into the initramfs. Do not use them as the default verification path unless the change touches the browser shell boot flow. `make test-gui-smoke` opens a QEMU window briefly, validates serial-log startup health, and captures a QEMU screendump to reject the framebuffer loader or green crash/fallback screen as false positives. Manual validation is still needed for interaction quality.
 
-`make run-gui` auto-detects a larger macOS GUI size through `scripts/detect-gui-size.sh`, roughly 90% of the main display with an upper clamp near 2K. GUI resolution can still be overridden with `SUVOS_GUI_WIDTH` and `SUVOS_GUI_HEIGHT`, for example `make run-gui SUVOS_GUI_WIDTH=1440 SUVOS_GUI_HEIGHT=900`.
+The GUI boot supervisor in `/init` treats browser-shell exit as recoverable: Cage/Chromium are restarted up to 3 times per 60 seconds, then SuvOS shows the green crash/fallback screen and returns to the serial console. A normal `make test-gui-smoke` run should not trigger any restart.
 
-Use `make test-gui-resolutions` when changing QEMU video setup, render profiles, or startup resolution handling. It validates startup modes only; live window resize still needs manual/hardware validation.
+`make run-gui` auto-detects a larger macOS GUI size through `scripts/detect-gui-size.sh`, roughly 90% of the main display with an upper clamp near 2K. GUI resolution can still be overridden with `SUVOS_GUI_WIDTH` and `SUVOS_GUI_HEIGHT`, for example `make run-gui SUVOS_GUI_WIDTH=1440 SUVOS_GUI_HEIGHT=900`. The default GUI path sets both the QEMU `virtio-vga` mode list and the kernel `video=Virtual-1:...-32` mode-setting parameter; otherwise the guest can list the requested mode but still boot the GUI at 720x400.
+
+Use `make test-gui-resolutions` when changing QEMU video setup, render profiles, or startup resolution handling. It validates startup modes through DRM logs and QEMU screendump size; live window resize still needs manual/hardware validation.
 
 Cursor theme, QEMU input devices, udev/libinput discovery, and audio backend are GUI runtime details. Keep them replaceable through build/run variables and do not move them into SuvOS core policy or control-plane logic. If mouse devices exist under `/dev/input` but Cage has no usable mouse, check whether `eudev` started and whether `libinput list-devices` returns devices.
 

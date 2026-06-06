@@ -106,7 +106,7 @@ make run-graphics
 make run-core-graphics
 ```
 
-На macOS текущий Homebrew QEMU открывает окно через `-display cocoa`; `make run-graphics` пока использует `std` VGA как самый совместимый ранний режим. В этом режиме init загружает минимальные DRM/framebuffer modules, затем запускает `suvos-splash`, который пытается залить `/dev/fb0` сплошным цветом. Если framebuffer недоступен, boot продолжается через serial console и пишет диагностику. Полноценный browser shell UI появится позже, когда в образ будет добавлен Wayland/Chromium stack.
+На macOS текущий Homebrew QEMU открывает окно через `-display cocoa`; `make run-graphics` пока использует `std` VGA как самый совместимый ранний режим. В этом режиме init загружает минимальные DRM/framebuffer modules, затем запускает `suvos-splash`, который рисует framebuffer boot-loader с надписью `SuvOS` и текущим статусом. Если framebuffer недоступен, boot продолжается через serial console и пишет диагностику. Зеленый framebuffer-экран теперь зарезервирован для crash/fallback состояния, например если GUI shell вышел и система вернулась в serial console.
 
 Следующий GUI-этап описан в [SuvOS_CONCEPT.md](SuvOS_CONCEPT.md): Wayland runtime + Cage + обычный Chromium. Для MVP Chromium не должен запускаться в `--kiosk` или `--app`, потому что SuvOS shell должен сохранить вкладки, адресную строку и extensions UI. Cage нужен как минимальный compositor для одного maximized browser window без GNOME/KDE/window manager.
 
@@ -126,6 +126,8 @@ SUVOS_CURSOR_THEME_PACKAGE=breeze-icons make run-gui
 
 Chromium в этом режиме запускается как Wayland-клиент через `--ozone-platform=wayland`. `xwayland` присутствует только потому, что текущий Alpine-пакет Cage 0.2.0 пытается поднять XWayland server при старте; это не означает, что SuvOS переходит на X11. Cage/Chromium запускаются не от root, а от системного пользователя `suvos-browser` с профилем в `/data/suvos/chromium`. `--no-sandbox` запрещен в default GUI boot; включить его можно только явным dev escape через `suvos.allow_no_sandbox=1` или `SUVOS_CHROMIUM_ALLOW_NO_SANDBOX=1`.
 
+Закрытие Chromium через browser `X` пока не считается безопасным shutdown-flow. Settings UI ставит web-level `beforeunload` warning, но Chromium не гарантирует показ такого предупреждения при закрытии browser chrome. Поэтому default-поведение теперь recovery-first: если browser shell вышел или упал, `/init` перезапускает Cage/Chromium до 3 раз за 60 секунд. Если лимит исчерпан, SuvOS показывает зеленый crash/fallback screen и возвращается в serial console. Полноценное превращение browser `X` в системную power-кнопку с обязательным предупреждением требует Chromium patchset или privileged internal page.
+
 Render profile задается через `suvos.render=<profile>`. Если параметр не указан, используется `hardware`, чтобы реальная ОС не осталась навсегда в software-only режиме. QEMU на Mac M через Cocoa/TCG запускается с `suvos.render=qemu-tcg`: Chromium в этом профиле использует ANGLE `gl-egl` поверх Mesa llvmpipe, а Vulkan/VAAPI отключены. Fatal `GLDisplayEGL`/GPU-process errors в этом профиле считаются багом и ломают GUI smoke-test.
 
 `make run-gui` на macOS автоматически выбирает стартовое разрешение примерно в 90% от logical-размера основного экрана. На текущем MacBook Pro это дает около `1552x1000` вместо старого `1280x800`. Авторазмер ограничен сверху значениями `SUVOS_GUI_MAX_WIDTH=1880` и `SUVOS_GUI_MAX_HEIGHT=1120`, чтобы внешний 4K/5K-monitor не создавал слишком тяжелый QEMU framebuffer.
@@ -140,7 +142,7 @@ make test-gui-smoke SUVOS_GUI_WIDTH=1024 SUVOS_GUI_HEIGHT=768
 make test-gui-resolutions
 ```
 
-Это задает `virtio-vga,xres=...,yres=...,edid=on`. `make test-gui-resolutions` автоматически проверяет стартовые режимы 1024x768 и 1440x900. Live resize окна QEMU зависит от связки QEMU Cocoa -> virtio-gpu -> Linux DRM -> wlroots/Cage и пока считается отдельной ручной/hardware-проверкой, а не гарантированной возможностью.
+Это задает QEMU video device `virtio-vga,xres=...,yres=...,edid=on` и kernel mode-setting параметр `video=Virtual-1:...-32`, чтобы guest не только видел режим в списке DRM modes, но и реально стартовал в этом разрешении. `make test-gui-resolutions` автоматически проверяет стартовые режимы 1024x768 и 1440x900, включая размер QEMU screendump. Live resize окна QEMU зависит от связки QEMU Cocoa -> virtio-gpu -> Linux DRM -> wlroots/Cage и пока считается отдельной ручной/hardware-проверкой, а не гарантированной возможностью.
 
 Input/audio devices тоже можно переопределить:
 
@@ -155,7 +157,7 @@ GUI smoke-test:
 make test-gui-smoke
 ```
 
-Он тоже собирает GUI-профиль и открывает окно QEMU на ограниченное время. Тест проверяет serial-лог на запуск Cage/Chromium, пользователя `suvos-browser`, render profile, input/audio devices, отсутствие default `--no-sandbox`, ранний выход browser shell и fatal GL/GPU ошибки. В конце тест делает QEMU `screendump` и падает, если framebuffer остался зеленым splash-экраном.
+Он тоже собирает GUI-профиль и открывает окно QEMU на ограниченное время. Тест проверяет serial-лог на запуск Cage/Chromium, пользователя `suvos-browser`, render profile, input/audio devices, отсутствие default `--no-sandbox`, ранний выход browser shell и fatal GL/GPU ошибки. В конце тест делает QEMU `screendump`, сверяет его размер с запрошенным стартовым разрешением и падает, если framebuffer остался на boot-loader или зеленом crash/fallback-экране.
 
 Сборка создает внешний bootstrap-secret:
 
@@ -225,7 +227,7 @@ poweroff
   +-- /system/suvos/bin/suvos-gateway
   |     +-- http://127.0.0.1:8080/api/*
   +-- /system/suvos/bin/suvos-splash
-  |     +-- optional /dev/fb0 color fill in suvos.graphics=1 mode
+  |     +-- optional /dev/fb0 loader/crash screen in suvos.graphics=1 mode
   +-- /system/suvos/bin/suvos-start-gui
   |     +-- optional Cage + ordinary Chromium shell in suvos.gui=1 mode
   +-- /system/suvos/bin/suvos-shell
@@ -238,7 +240,7 @@ poweroff
 
 `suvosctl` нужен для проверки внутреннего Unix socket API. Основной интерактивный CLI пока остается `suvos`, а будущий HTTP gateway должен обращаться к `/run/suvosd/control.sock` так же, как `suvosctl`.
 
-`suvos-gateway` - первый HTTP boundary для будущего web UI. Он слушает только `127.0.0.1:8080`, отдает собранный UI dist из `/system/suvos/ui`, возвращает JSON и проксирует команды в `suvosd` через Unix socket. `/api/status`, `/api/roles` и `/api/apps` возвращают структурированные JSON-объекты для UI; `/api/run?name=<app>` остается command endpoint и возвращает `exitCode` плюс `output`. Текущие endpoints: `/`, `/ui/app.js`, `/ui/styles.css`, `/health`, `/api/status`, `/api/roles`, `/api/apps`, `/api/run?name=<app>`.
+`suvos-gateway` - первый HTTP boundary для будущего web UI. Он слушает только `127.0.0.1:8080`, отдает собранный UI dist из `/system/suvos/ui`, возвращает JSON и проксирует команды в `suvosd` через Unix socket. `/api/status`, `/api/roles` и `/api/apps` возвращают структурированные JSON-объекты для UI; `/api/run?name=<app>` остается command endpoint и возвращает `exitCode` плюс `output`. Текущие endpoints: `/`, `/ui/app.js`, `/ui/styles.css`, `/health`, `/api/status`, `/api/roles`, `/api/apps`, `/api/run?name=<app>`. Следующий security-шаг - session token для browser UI перед добавлением state-changing browser actions.
 
 Файлы SuvOS лежат здесь:
 

@@ -96,9 +96,7 @@ cp "$ROOT_BOOTSTRAP_HASH" "$ROOTFS/system/suvos/security/root-bootstrap.sha256"
 
 chmod +x "$ROOTFS/init"
 chmod +x "$ROOTFS/system/suvos/bin/"*
-chmod +x "$ROOTFS/system/suvos/apps/hello.sh" \
-  "$ROOTFS/system/suvos/apps/py-hello.py" \
-  "$ROOTFS/system/suvos/apps/node-hello.js"
+find "$ROOTFS/system/suvos/apps" -maxdepth 1 -type f -exec chmod 0755 {} +
 chmod 0644 "$ROOTFS/system/suvos/config/build.conf" \
   "$ROOTFS/system/suvos/config/locale.conf" \
   "$ROOTFS/system/suvos/lib/i18n.sh" \

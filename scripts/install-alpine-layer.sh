@@ -23,16 +23,16 @@ DISABLE_LAYER_CACHE="${SUVOS_DISABLE_LAYER_CACHE:-0}"
   exit 1
 }
 
-if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
-  cat >&2 <<EOF
+install_into_root() {
+  local target_root="$1"
+
+  if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+    cat >&2 <<EOF
 docker is required to install Alpine packages for layer: $LAYER_NAME.
 Start OrbStack/Docker and run make again.
 EOF
-  exit 1
-fi
-
-install_into_root() {
-  local target_root="$1"
+    exit 1
+  fi
 
   docker run --rm --platform linux/amd64 \
     -e LAYER_PACKAGES="$PACKAGES" \
