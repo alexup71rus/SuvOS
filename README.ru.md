@@ -128,10 +128,14 @@ Chromium в этом режиме запускается как Wayland-клие
 
 Render profile задается через `suvos.render=<profile>`. Если параметр не указан, используется `hardware`, чтобы реальная ОС не осталась навсегда в software-only режиме. QEMU на Mac M через Cocoa/TCG запускается с `suvos.render=qemu-tcg`: Chromium в этом профиле использует ANGLE `gl-egl` поверх Mesa llvmpipe, а Vulkan/VAAPI отключены. Fatal `GLDisplayEGL`/GPU-process errors в этом профиле считаются багом и ломают GUI smoke-test.
 
+`make run-gui` на macOS автоматически выбирает стартовое разрешение примерно в 90% от logical-размера основного экрана. На текущем MacBook Pro это дает около `1552x1000` вместо старого `1280x800`. Авторазмер ограничен сверху значениями `SUVOS_GUI_MAX_WIDTH=1880` и `SUVOS_GUI_MAX_HEIGHT=1120`, чтобы внешний 4K/5K-monitor не создавал слишком тяжелый QEMU framebuffer.
+
 Стартовое разрешение GUI-профиля можно менять без правки скриптов:
 
 ```sh
+SUVOS_GUI_SCALE_PERCENT=95 make run-gui
 make run-gui SUVOS_GUI_WIDTH=1440 SUVOS_GUI_HEIGHT=900
+SUVOS_GUI_MAX_WIDTH=0 SUVOS_GUI_MAX_HEIGHT=0 make run-gui
 make test-gui-smoke SUVOS_GUI_WIDTH=1024 SUVOS_GUI_HEIGHT=768
 make test-gui-resolutions
 ```

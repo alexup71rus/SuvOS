@@ -103,7 +103,7 @@ make test-gui-resolutions
 
 `make run-gui` and `make test-gui-smoke` are intentionally heavier than the normal tests because they embed Chromium into the initramfs. Do not use them as the default verification path unless the change touches the browser shell boot flow. `make test-gui-smoke` opens a QEMU window briefly, validates serial-log startup health, and captures a QEMU screendump to reject the green splash screen as a false positive. Manual validation is still needed for interaction quality.
 
-GUI resolution can be overridden with `SUVOS_GUI_WIDTH` and `SUVOS_GUI_HEIGHT`, for example `make run-gui SUVOS_GUI_WIDTH=1440 SUVOS_GUI_HEIGHT=900`.
+`make run-gui` auto-detects a larger macOS GUI size through `scripts/detect-gui-size.sh`, roughly 90% of the main display with an upper clamp near 2K. GUI resolution can still be overridden with `SUVOS_GUI_WIDTH` and `SUVOS_GUI_HEIGHT`, for example `make run-gui SUVOS_GUI_WIDTH=1440 SUVOS_GUI_HEIGHT=900`.
 
 Use `make test-gui-resolutions` when changing QEMU video setup, render profiles, or startup resolution handling. It validates startup modes only; live window resize still needs manual/hardware validation.
 

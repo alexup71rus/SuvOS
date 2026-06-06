@@ -1,7 +1,8 @@
 .PHONY: all assets initramfs initramfs-core initramfs-gui cpp suvosd suvosctl suvos-gateway suvos-splash ui ui-check ui-fix run run-core run-graphics run-core-graphics run-gui test test-core test-full test-gui-smoke test-gui-resolutions clean clean-layer-cache distclean
 
-SUVOS_GUI_WIDTH ?= 1280
-SUVOS_GUI_HEIGHT ?= 800
+SUVOS_GUI_SIZE ?= $(shell scripts/detect-gui-size.sh)
+SUVOS_GUI_WIDTH ?= $(word 1,$(SUVOS_GUI_SIZE))
+SUVOS_GUI_HEIGHT ?= $(word 2,$(SUVOS_GUI_SIZE))
 SUVOS_GUI_VIDEO_DEVICE ?= virtio-vga,xres=$(SUVOS_GUI_WIDTH),yres=$(SUVOS_GUI_HEIGHT),edid=on
 SUVOS_GUI_INPUT_DEVICES ?= -device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0 -device usb-tablet,bus=xhci.0 -device usb-mouse,bus=xhci.0
 SUVOS_GUI_AUDIO_DEVICES ?= -audiodev coreaudio,id=suvos-audio,out.mixing-engine=on -device virtio-sound-pci,audiodev=suvos-audio,streams=1
@@ -57,6 +58,7 @@ run-core-graphics: initramfs-core
 	SUVOS_DISPLAY=cocoa SUVOS_VGA=std SUVOS_APPEND="console=ttyS0 rdinit=/init quiet loglevel=3 panic=-1 vga=791 suvos.graphics=1" scripts/run-suvos.sh
 
 run-gui: initramfs-gui
+	@echo "SuvOS GUI size: $(SUVOS_GUI_WIDTH)x$(SUVOS_GUI_HEIGHT)"
 	SUVOS_MEMORY=3072M SUVOS_CPUS=4 SUVOS_DISPLAY=cocoa SUVOS_VIDEO_DEVICE="$(SUVOS_GUI_VIDEO_DEVICE)" SUVOS_EXTRA_QEMU_ARGS="$(SUVOS_GUI_INPUT_DEVICES) $(SUVOS_GUI_AUDIO_DEVICES)" SUVOS_APPEND="console=ttyS0 rdinit=/init quiet loglevel=3 panic=-1 suvos.graphics=1 suvos.gui=1 suvos.render=qemu-tcg" scripts/run-suvos.sh
 
 test: test-core

@@ -128,10 +128,14 @@ Chromium still runs as a Wayland client through `--ozone-platform=wayland`. `xwa
 
 The render profile is selected through `suvos.render=<profile>`. If the parameter is omitted, SuvOS uses `hardware` so the real OS does not become permanently software-only. The Mac M QEMU Cocoa/TCG dev run uses `suvos.render=qemu-tcg`: Chromium uses ANGLE `gl-egl` on Mesa llvmpipe in this profile, while Vulkan/VAAPI are disabled. Fatal `GLDisplayEGL`/GPU-process errors in this profile are treated as bugs and fail the GUI smoke test.
 
+On macOS, `make run-gui` automatically selects a startup resolution at roughly 90% of the main display's logical size. On the current MacBook Pro this yields about `1552x1000` instead of the old `1280x800`. The auto-size is capped by `SUVOS_GUI_MAX_WIDTH=1880` and `SUVOS_GUI_MAX_HEIGHT=1120` so an external 4K/5K monitor does not create an excessively heavy QEMU framebuffer.
+
 The GUI profile startup resolution can be changed without editing scripts:
 
 ```sh
+SUVOS_GUI_SCALE_PERCENT=95 make run-gui
 make run-gui SUVOS_GUI_WIDTH=1440 SUVOS_GUI_HEIGHT=900
+SUVOS_GUI_MAX_WIDTH=0 SUVOS_GUI_MAX_HEIGHT=0 make run-gui
 make test-gui-smoke SUVOS_GUI_WIDTH=1024 SUVOS_GUI_HEIGHT=768
 make test-gui-resolutions
 ```
