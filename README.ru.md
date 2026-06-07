@@ -39,12 +39,15 @@ SUVOS_REFRESH_ASSETS=1 make assets
 
 Alpine runtime/GUI/AEC rootfs-слои тоже кэшируются. Первый `make test-full` или GUI/AEC запуск собирает tar-слой в `build/cache/rootfs-layers` и APK download cache в `build/cache/apk`; следующие сборки с тем же Alpine image и тем же списком пакетов просто распаковывают готовый слой без длинного списка `Installing ...`.
 
+Отдельные большие форки не хранятся внутри этого репозитория. Вместо submodules SuvOS использует `third_party/vendors.lock.json` и `make bootstrap-vendors`. Сейчас обязательный vendor только один: `SuvOS_AEC` в `third_party/aec`. Chromium fork зарезервирован в lockfile как будущий optional track и по умолчанию не bootstrap'ится.
+
 Управление layer cache:
 
 ```sh
 SUVOS_REFRESH_LAYER_CACHE=1 make run
 SUVOS_DISABLE_LAYER_CACHE=1 make run
 make clean-layer-cache
+make bootstrap-vendors
 ```
 
 `make clean` layer cache не удаляет. `make clean-layer-cache` удаляет только Alpine package/rootfs layer cache. `make distclean` удаляет весь `build/`.
@@ -118,6 +121,7 @@ make run-core-graphics
 Обычный ручной запуск SuvOS:
 
 ```sh
+make bootstrap-vendors
 make run
 # или явно:
 make runos
@@ -133,7 +137,7 @@ Admin Explorer Code входит в обычный manual run:
 make run
 ```
 
-`make run` запускает root-capable Admin Explorer Code внутри guest VM на `127.0.0.1:3030` и открывает Chromium с вкладками `http://suv.os/` и `http://suv.os/aec/`. AEC artifact готовится во внешнем sibling repo `../admin-explorer-code` как Code - OSS source fork без marketplace/cloud/telemetry defaults; путь можно заменить через `SUVOS_AEC_REPO` или `SUVOS_AEC_DIST`. В этот профиль добавляется небольшой glibc payload для AEC server. `make run-gui` и `make run-gui-aec` сохранены как совместимые aliases для старых ручных команд.
+`make run` запускает root-capable Admin Explorer Code внутри guest VM на `127.0.0.1:3030` и открывает Chromium с вкладками `http://suv.os/` и `http://suv.os/aec/`. AEC artifact по умолчанию собирается из checkout `third_party/aec`, который подтягивается через `make bootstrap-vendors` по pinned ref из `third_party/vendors.lock.json`. Для локальной разработки путь можно переопределить через `SUVOS_AEC_REPO`, а готовый artifact - через `SUVOS_AEC_DIST`. В этот профиль добавляется небольшой glibc payload для AEC server. `make run-gui` и `make run-gui-aec` сохранены как совместимые aliases для старых ручных команд.
 
 Альтернативный runner для Parallels зарезервирован отдельной командой:
 

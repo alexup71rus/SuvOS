@@ -1,0 +1,21 @@
+{
+  "vendors": {
+    "aec": {
+      "path": "third_party/aec",
+      "repo": "https://github.com/alexup71rus/SuvOS_AEC.git",
+      "ref": "8819a21b1e7252df96dddefc12f7b87c1a41cd31",
+      "tag": null,
+      "optional": false,
+      "bootstrap": true
+    },
+    "chromium": {
+      "path": "third_party/chromium",
+      "repo": "https://github.com/alexup71rus/SuvOS_Chromium.git",
+      "ref": null,
+      "tag": null,
+      "optional": true,
+      "bootstrap": false,
+      "notes": "Reserved for the future SuvOS Chromium fork."
+    }
+  }
+}

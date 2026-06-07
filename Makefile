@@ -1,4 +1,4 @@
-.PHONY: all assets initramfs initramfs-core initramfs-gui initramfs-aec initramfs-aec-arm64 initramfs-dev initramfs-dev-arm64 suvosd suvosctl suvos-gateway suvos-splash ui ui-check ui-fix aec run runos run-qemu run-qemu-x86 run-arm64 run-parallels run-dev run-dev-qemu-x86 run-dev-arm64 run-console run-core run-graphics run-core-graphics run-gui run-gui-aec test test-core test-full test-dev test-gui-smoke test-gui-resolutions test-aec-smoke clean clean-layer-cache distclean
+.PHONY: all assets bootstrap-vendors initramfs initramfs-core initramfs-gui initramfs-aec initramfs-aec-arm64 initramfs-dev initramfs-dev-arm64 suvosd suvosctl suvos-gateway suvos-splash ui ui-check ui-fix aec run runos run-qemu run-qemu-x86 run-arm64 run-parallels run-dev run-dev-qemu-x86 run-dev-arm64 run-console run-core run-graphics run-core-graphics run-gui run-gui-aec test test-core test-full test-dev test-gui-smoke test-gui-resolutions test-aec-smoke clean clean-layer-cache distclean
 
 SUVOS_HOST_ARCH ?= $(shell uname -m)
 RUNOS_BACKEND ?= $(if $(filter arm64 aarch64,$(SUVOS_HOST_ARCH)),arm64,qemu)
@@ -21,6 +21,9 @@ all: initramfs
 
 assets:
 	python3 tools/fetch_alpine_assets.py
+
+bootstrap-vendors:
+	scripts/bootstrap-vendors.sh
 
 suvosd:
 	scripts/build-suvosd.sh

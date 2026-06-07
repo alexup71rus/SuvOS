@@ -5,13 +5,72 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$ROOT_DIR/scripts/suvos-arch.sh"
 ARCH="$(suvos_arch)"
 AEC_TARGET_ARCH="$(suvos_aec_target_arch "$ARCH")"
-AEC_REPO="${SUVOS_AEC_REPO:-$ROOT_DIR/../admin-explorer-code}"
-if [ "$ARCH" = "x86_64" ]; then
-  AEC_DIST_DEFAULT="$AEC_REPO/dist/aec-rootfs.tar.gz"
-else
-  AEC_DIST_DEFAULT="$AEC_REPO/dist/aec-rootfs-$ARCH.tar.gz"
+LOCKFILE="${SUVOS_VENDORS_LOCKFILE:-$ROOT_DIR/third_party/vendors.lock.json}"
+LEGACY_AEC_REPO="$ROOT_DIR/../admin-explorer-code"
+
+lock_value() {
+  python3 "$ROOT_DIR/scripts/vendor-lock.py" --lockfile "$LOCKFILE" get aec "$1" 2>/dev/null || true
+}
+
+LOCKED_AEC_PATH="$(lock_value path)"
+LOCKED_AEC_REF="$(lock_value ref)"
+LOCKED_AEC_REPO=""
+if [ -n "$LOCKED_AEC_PATH" ]; then
+  LOCKED_AEC_REPO="$ROOT_DIR/$LOCKED_AEC_PATH"
 fi
-AEC_DIST="${SUVOS_AEC_DIST:-$AEC_DIST_DEFAULT}"
+
+if [ -n "${SUVOS_AEC_DIST:-}" ]; then
+  AEC_DIST="$SUVOS_AEC_DIST"
+  if [ -s "$AEC_DIST" ] && [ "${SUVOS_REFRESH_AEC:-0}" != "1" ]; then
+    echo "aec artifact ready: $AEC_DIST"
+    exit 0
+  fi
+else
+  AEC_DIST=""
+fi
+
+resolve_aec_repo() {
+  if [ -n "${SUVOS_AEC_REPO:-}" ]; then
+    printf '%s\n' "$SUVOS_AEC_REPO"
+    return 0
+  fi
+
+  if [ -n "$LOCKED_AEC_REPO" ] && [ -d "$LOCKED_AEC_REPO" ]; then
+    printf '%s\n' "$LOCKED_AEC_REPO"
+    return 0
+  fi
+
+  if [ -d "$LEGACY_AEC_REPO" ]; then
+    printf '%s\n' "$LEGACY_AEC_REPO"
+    return 0
+  fi
+
+  if [ -n "$LOCKED_AEC_REPO" ]; then
+    echo "AEC checkout not found: $LOCKED_AEC_REPO" >&2
+    echo "Run: $ROOT_DIR/scripts/bootstrap-vendors.sh aec" >&2
+  else
+    echo "AEC checkout is not configured in $LOCKFILE" >&2
+  fi
+  echo "Or set SUVOS_AEC_REPO / SUVOS_AEC_DIST." >&2
+  exit 1
+}
+
+AEC_REPO="$(resolve_aec_repo)"
+if [ -z "$AEC_DIST" ]; then
+  if [ "$ARCH" = "x86_64" ]; then
+    AEC_DIST="$AEC_REPO/dist/aec-rootfs.tar.gz"
+  else
+    AEC_DIST="$AEC_REPO/dist/aec-rootfs-$ARCH.tar.gz"
+  fi
+fi
+
+if [ -z "${SUVOS_AEC_REPO:-}" ] && [ "$AEC_REPO" = "$LOCKED_AEC_REPO" ] && [ -n "$LOCKED_AEC_REF" ]; then
+  current_ref="$(git -C "$AEC_REPO" rev-parse HEAD 2>/dev/null || true)"
+  if [ -n "$current_ref" ] && [ "$current_ref" != "$LOCKED_AEC_REF" ]; then
+    echo "warning: AEC checkout is at $current_ref, lockfile pins $LOCKED_AEC_REF" >&2
+    echo "Run: $ROOT_DIR/scripts/bootstrap-vendors.sh aec" >&2
+  fi
+fi
 
 aec_source_is_newer_than_artifact() {
   [ -s "$AEC_DIST" ] || return 0

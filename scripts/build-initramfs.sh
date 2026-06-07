@@ -11,11 +11,47 @@ WITH_RUNTIMES="${SUVOS_WITH_RUNTIMES:-1}"
 WITH_GUI="${SUVOS_WITH_GUI:-0}"
 WITH_AEC="${SUVOS_WITH_AEC:-0}"
 WITH_DEVTOOLS="${SUVOS_WITH_DEVTOOLS:-0}"
-AEC_REPO="${SUVOS_AEC_REPO:-$ROOT_DIR/../admin-explorer-code}"
-if [ "$ARCH" = "x86_64" ]; then
-  AEC_DIST_DEFAULT="$AEC_REPO/dist/aec-rootfs.tar.gz"
+LOCKFILE="${SUVOS_VENDORS_LOCKFILE:-$ROOT_DIR/third_party/vendors.lock.json}"
+LEGACY_AEC_REPO="$ROOT_DIR/../admin-explorer-code"
+
+lock_value() {
+  python3 "$ROOT_DIR/scripts/vendor-lock.py" --lockfile "$LOCKFILE" get aec "$1" 2>/dev/null || true
+}
+
+LOCKED_AEC_PATH="$(lock_value path)"
+LOCKED_AEC_REPO=""
+if [ -n "$LOCKED_AEC_PATH" ]; then
+  LOCKED_AEC_REPO="$ROOT_DIR/$LOCKED_AEC_PATH"
+fi
+
+resolve_aec_repo() {
+  if [ -n "${SUVOS_AEC_REPO:-}" ]; then
+    printf '%s\n' "$SUVOS_AEC_REPO"
+    return 0
+  fi
+
+  if [ -n "$LOCKED_AEC_REPO" ] && [ -d "$LOCKED_AEC_REPO" ]; then
+    printf '%s\n' "$LOCKED_AEC_REPO"
+    return 0
+  fi
+
+  if [ -d "$LEGACY_AEC_REPO" ]; then
+    printf '%s\n' "$LEGACY_AEC_REPO"
+    return 0
+  fi
+
+  return 1
+}
+
+AEC_REPO="$(resolve_aec_repo || true)"
+if [ -n "$AEC_REPO" ]; then
+  if [ "$ARCH" = "x86_64" ]; then
+    AEC_DIST_DEFAULT="$AEC_REPO/dist/aec-rootfs.tar.gz"
+  else
+    AEC_DIST_DEFAULT="$AEC_REPO/dist/aec-rootfs-$ARCH.tar.gz"
+  fi
 else
-  AEC_DIST_DEFAULT="$AEC_REPO/dist/aec-rootfs-$ARCH.tar.gz"
+  AEC_DIST_DEFAULT=""
 fi
 AEC_DIST="${SUVOS_AEC_DIST:-$AEC_DIST_DEFAULT}"
 
@@ -100,6 +136,17 @@ if [ "$WITH_GUI" = "1" ]; then
 fi
 
 if [ "$WITH_AEC" = "1" ]; then
+  if [ -z "$AEC_REPO" ] && [ -z "${SUVOS_AEC_DIST:-}" ]; then
+    if [ -n "$LOCKED_AEC_REPO" ]; then
+      echo "AEC checkout not found: $LOCKED_AEC_REPO" >&2
+      echo "Run: $ROOT_DIR/scripts/bootstrap-vendors.sh aec" >&2
+    else
+      echo "AEC checkout is not configured in $LOCKFILE" >&2
+    fi
+    echo "Or set SUVOS_AEC_REPO / SUVOS_AEC_DIST." >&2
+    exit 1
+  fi
+
   SUVOS_ARCH="$ARCH" "$ROOT_DIR/scripts/build-aec.sh"
   SUVOS_ARCH="$ARCH" "$ROOT_DIR/scripts/install-debian-glibc.sh" "$ROOTFS"
   SUVOS_ARCH="$ARCH" "$ROOT_DIR/scripts/install-alpine-aec.sh" "$ROOTFS"

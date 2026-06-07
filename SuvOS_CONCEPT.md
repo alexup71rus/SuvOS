@@ -440,7 +440,7 @@ MVP-модель:
 
 MVP roadmap для AEC:
 
-1. Держать AEC в sibling repo `../admin-explorer-code`, не клонировать исходники Code - OSS в SuvOS repo.
+1. Держать AEC как отдельный публичный fork `SuvOS_AEC`, не клонировать исходники Code - OSS в SuvOS repo и подтягивать checkout через `third_party/vendors.lock.json` + `scripts/bootstrap-vendors.sh`.
 2. Собирать AEC artifact как Code - OSS source fork без marketplace gallery, Microsoft/cloud endpoints, telemetry defaults, settings sync, account auth defaults и chat/Copilot contributions.
 3. Для ручного запуска включать AEC по умолчанию через `make run` / `make runos`; низкоуровневые `SUVOS_WITH_AEC=1`, `make run-gui-aec` и `make test-aec-smoke` оставить для совместимости и автотестов.
 4. Запускать AEC server внутри guest как root на `127.0.0.1:3030` с base path `/aec`.
@@ -462,7 +462,7 @@ Chromium fork нужен только после того, как обычный
 4. Первый практичный patch target: close button/window control -> SuvOS confirmation/shutdown handoff или privileged internal page.
 5. Только после успешного patch/build подключать Chromium artifact к SuvOS GUI profile.
 
-Code - OSS fork для AEC теперь является активным треком. Он должен жить во внешнем repo `../admin-explorer-code`, быть привязан к конкретному upstream tag/sha и отдавать в SuvOS только готовый linux-x64 artifact. OpenVSCode Server можно оставить как исторический spike/fallback, но не как основной путь AEC.
+Code - OSS fork для AEC теперь является активным треком. Он должен жить в отдельном публичном repo `SuvOS_AEC`, быть привязан в SuvOS через pinned commit SHA из `third_party/vendors.lock.json` и отдавать в SuvOS только готовый artifact. OpenVSCode Server можно оставить как исторический spike/fallback, но не как основной путь AEC.
 
 ### File picker
 

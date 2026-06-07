@@ -39,12 +39,15 @@ SUVOS_REFRESH_ASSETS=1 make assets
 
 Alpine runtime/GUI/AEC rootfs layers are cached too. The first `make test-full` or GUI/AEC run creates a tar layer under `build/cache/rootfs-layers` and an APK download cache under `build/cache/apk`; later builds with the same Alpine image and package list just extract the cached layer without the long `Installing ...` package list.
 
+Large upstream forks are not stored inside this repository. Instead of submodules, SuvOS uses `third_party/vendors.lock.json` plus `make bootstrap-vendors`. Right now the only required vendor is `SuvOS_AEC` under `third_party/aec`. The Chromium fork is reserved in the lockfile as a future optional track and is not bootstrapped by default.
+
 Layer cache controls:
 
 ```sh
 SUVOS_REFRESH_LAYER_CACHE=1 make run
 SUVOS_DISABLE_LAYER_CACHE=1 make run
 make clean-layer-cache
+make bootstrap-vendors
 ```
 
 `make clean` keeps the layer cache. `make clean-layer-cache` removes only the Alpine package/rootfs layer cache. `make distclean` removes the whole `build/` directory.
@@ -118,6 +121,7 @@ The next GUI stage is documented in [SuvOS_CONCEPT.md](SuvOS_CONCEPT.md): Waylan
 Normal manual SuvOS run:
 
 ```sh
+make bootstrap-vendors
 make run
 # or explicitly:
 make runos
@@ -133,7 +137,7 @@ Admin Explorer Code is part of the normal manual run:
 make run
 ```
 
-`make run` starts root-capable Admin Explorer Code inside the guest VM on `127.0.0.1:3030` and opens Chromium with `http://suv.os/` and `http://suv.os/aec/` tabs. The AEC artifact is prepared in the external sibling repo `../admin-explorer-code` as a Code - OSS source fork without marketplace/cloud/telemetry defaults; override it with `SUVOS_AEC_REPO` or `SUVOS_AEC_DIST`. This profile adds a small glibc payload for the AEC server. `make run-gui` and `make run-gui-aec` are kept as compatibility aliases for older manual commands.
+`make run` starts root-capable Admin Explorer Code inside the guest VM on `127.0.0.1:3030` and opens Chromium with `http://suv.os/` and `http://suv.os/aec/` tabs. The AEC artifact is built by default from the `third_party/aec` checkout, which is fetched by `make bootstrap-vendors` from the pinned ref in `third_party/vendors.lock.json`. For local development, override the checkout via `SUVOS_AEC_REPO` or point directly at a ready artifact via `SUVOS_AEC_DIST`. This profile adds a small glibc payload for the AEC server. `make run-gui` and `make run-gui-aec` are kept as compatibility aliases for older manual commands.
 
 An alternative Parallels runner is reserved as a separate command:
 
