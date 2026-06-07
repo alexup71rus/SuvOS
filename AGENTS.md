@@ -2,7 +2,7 @@
 
 ## Project
 
-SuvOS is an x86_64 Linux-based OS prototype. The project currently owns the initramfs userspace, `/init`, `/system/suvos`, `/data/suvos`, `suvosd`, app manifests, localization, and QEMU boot/test flow. Alpine `v3.22` is an upstream package source, not the product identity.
+SuvOS is a Linux-based OS prototype with an x86_64 target path and an arm64/HVF development path on Apple Silicon. The project currently owns the initramfs userspace, `/init`, `/system/suvos`, `/data/suvos`, `suvosd`, `suvos-gateway`, the browser UI layer, app manifests, localization, and QEMU boot/test flow. Alpine `v3.22` is an upstream package source, not the product identity.
 
 ## Default Language
 
@@ -27,21 +27,21 @@ Use Russian for user-facing explanations unless the user asks otherwise. Code id
 - Keep runtime/user-writable state under `/data/suvos`.
 - Keep `/opt/suvos` as a compatibility symlink only.
 - `suvosd` is the privileged control plane and should stay compiled C++.
-- `suvos` CLI and future UI must talk to `suvosd`; they must not launch arbitrary system paths directly.
+- `suvos` CLI, `suvos-gateway`, and UI code must talk to `suvosd`; they must not launch arbitrary system paths directly.
 - Prefer the Unix socket `/run/suvosd/control.sock` as the internal API boundary. Keep localhost HTTP in the separate `suvos-gateway` process above it.
 - Keep `suvosctl` as the diagnostic client for `/run/suvosd/control.sock`; update autotest when the socket protocol changes.
 - `suvos-gateway` must bind to `127.0.0.1` only unless the user explicitly approves a different exposure model.
-- Keep the first web UI under `/system/suvos/ui` and serve it through `suvos-gateway`; UI code must use the HTTP API instead of bypassing the gateway.
+- Keep the current web UI under `/system/suvos/ui` and serve it through `suvos-gateway`; UI code must use the HTTP API instead of bypassing the gateway.
 - Keep browser-facing read endpoints structured JSON; avoid parsing localized CLI text in UI code.
 - Keep UI source under `src/ui`; copy only built `build/ui` artifacts into the initramfs image.
 - Build/check the frontend bundle through `make ui` and `npm run ui:check`; initramfs assembly should only verify and copy `build/ui`, not rebuild UI sources directly.
-- Do not clone Chromium, VS Code/Code - OSS, OpenVSCode Server, or other large upstream browser/editor sources into this repository. Future forks must use separate vendor checkouts, be pinned through `third_party/vendors.lock.json`, and only feed built artifacts or documented integration points into SuvOS.
-- Keep `admin-explorer-code` (AEC) as a separate opt-in root-capable guest admin/debug explorer. It may expose unrestricted guest filesystem access inside the VM by design; host filesystem access remains out of scope. The future policy-aware `suvos-gateway -> suvosd` file API belongs to the separate user-facing file picker/file manager track.
+- Do not clone Chromium, VS Code/Code - OSS, OpenVSCode Server, or other large upstream browser/editor sources into this repository. Browser/editor forks must remain separate vendor checkouts, pinned through `third_party/vendors.lock.json`, and only feed built artifacts or documented integration points into SuvOS.
+- Keep Admin Explorer Code (AEC) as a separate root-capable guest admin/debug explorer. The normal manual `make run` profile includes it, but core builds and user-facing file APIs must not depend on it. AEC may expose unrestricted guest filesystem access inside the VM by design; host filesystem access remains out of scope. The policy-aware `suvos-gateway -> suvosd` file API belongs to the separate user-facing file picker/file manager track.
 - Keep `suvos-splash` framebuffer-only as the current graphics smoke baseline.
-- When moving to the browser shell stage, follow `SuvOS_CONCEPT.md`: Wayland runtime + Cage + ordinary Chromium, not `--kiosk`/`--app`, unless the user explicitly changes the browser-shell requirement.
+- For the browser shell, follow `SuvOS_CONCEPT.md`: Wayland runtime + Cage + ordinary Chromium, not `--kiosk`/`--app`, unless the user explicitly changes the browser-shell requirement.
 - Store the Chromium profile under `/data/suvos/chromium`; do not put browser user state in `/system/suvos`.
 - Run Cage/Chromium as `suvos-browser`, not root. Do not add `--no-sandbox` to the default GUI boot; use only the explicit dev escape documented in `SuvOS_CONCEPT.md`.
-- Keep QEMU software-rendering flags scoped to `suvos.render=qemu-tcg`; the implicit default render profile is `hardware`. For the current `SuvOS_Chromium` vendor artifact based on Alpine `chromium`, qemu-tcg uses ANGLE `gl-egl` over Mesa llvmpipe, not `--disable-gpu`.
+- Keep QEMU software-rendering flags scoped to explicit render profiles such as `suvos.render=qemu-tcg` and `suvos.render=qemu-hvf`; the implicit default render profile is `hardware`. For the current `SuvOS_Chromium` vendor artifact based on Alpine `chromium`, QEMU render profiles use ANGLE `gl-egl` over Mesa llvmpipe, not `--disable-gpu`.
 - Do not add GNOME, KDE, or a full desktop/session manager for the default SuvOS UI path.
 - `xwayland` may be kept only as a Cage package/runtime dependency; Chromium should stay on the Wayland/Ozone path for the default GUI.
 - If graphics behavior changes, keep the boot resilient when `/dev/fb0` is unavailable and report diagnostics over serial.
@@ -59,7 +59,7 @@ Before handing off most functional changes, run the fast core boot test:
 make test
 ```
 
-This is equivalent to `make test-core`. It builds without Python/Node runtime packages, boots QEMU, verifies the system area is read-only, runs `suvosd`, checks roles/auth, verifies `suvosctl` socket calls, verifies localhost HTTP gateway/UI calls, and executes shell/C++ demo apps.
+This is equivalent to `make test-core`. It builds without Python/Node runtime packages, boots QEMU, verifies the system area is read-only, runs `suvosd`, checks roles/auth, verifies `suvosctl` socket calls, verifies localhost HTTP gateway/UI calls, and verifies that the app registry is present and empty unless manifests were intentionally added.
 
 Run the full runtime test when touching Python/Node apps, runtime packaging, manifests for runtime apps, or release-like validation:
 
@@ -67,7 +67,7 @@ Run the full runtime test when touching Python/Node apps, runtime packaging, man
 make test-full
 ```
 
-The full test installs Python/Node runtime packages into the initramfs and executes shell/C++/Python/Node demo apps.
+The full test installs Python/Node runtime packages into the initramfs and verifies runtime availability in the guest.
 
 Run the explicit developer/root profile test when touching bootstrap auth success paths, `apk` availability, or developer-mode packaging:
 
@@ -112,7 +112,7 @@ make run-graphics
 make run-core-graphics
 ```
 
-Experimental GUI run:
+GUI/AEC run and smoke tests:
 
 ```sh
 make run-gui
@@ -120,11 +120,11 @@ make test-gui-smoke
 make test-gui-resolutions
 ```
 
-`make run-gui` and `make test-gui-smoke` are intentionally heavier than the normal tests because they embed Chromium into the initramfs. Do not use them as the default verification path unless the change touches the browser shell boot flow. `make test-gui-smoke` follows the default GUI+AEC startup path, validates serial-log startup health, and captures a QEMU screendump to reject the framebuffer loader or green crash/fallback screen as false positives. Manual validation is still needed for interaction quality.
+`make run`/`make run-gui` and `make test-gui-smoke` are intentionally heavier than the normal core test because they embed Chromium and AEC into the initramfs. Do not use GUI smoke as the default verification path unless the change touches the browser shell, AEC, graphics, input, audio, or startup resolution flow. `make test-gui-smoke` follows the default GUI+AEC startup path, validates serial-log startup health, and captures a QEMU screendump to reject the framebuffer loader or green crash/fallback screen as false positives. Manual validation is still needed for interaction quality.
 
 The GUI boot supervisor in `/init` treats browser-shell exit as recoverable: Cage/Chromium are restarted up to 3 times per 60 seconds, then SuvOS shows the green crash/fallback screen and returns to the serial console. A normal `make test-gui-smoke` run should not trigger any restart.
 
-`make run-gui` auto-detects a larger macOS GUI size through `scripts/detect-gui-size.sh`, roughly 90% of the main display with an upper clamp near 2K. GUI resolution can still be overridden with `SUVOS_GUI_WIDTH` and `SUVOS_GUI_HEIGHT`, for example `make run-gui SUVOS_GUI_WIDTH=1440 SUVOS_GUI_HEIGHT=900`. The default GUI path sets both the QEMU `virtio-vga` mode list and the kernel `video=Virtual-1:...-32` mode-setting parameter; otherwise the guest can list the requested mode but still boot the GUI at 720x400.
+The default GUI path auto-detects a larger macOS GUI size through `scripts/detect-gui-size.sh`, roughly 90% of the main display with an upper clamp near 2K. GUI resolution can still be overridden with `SUVOS_GUI_WIDTH` and `SUVOS_GUI_HEIGHT`, for example `make run SUVOS_GUI_WIDTH=1440 SUVOS_GUI_HEIGHT=900`. The default GUI path sets both the QEMU video device mode list and the kernel `video=Virtual-1:...-32` mode-setting parameter; otherwise the guest can list the requested mode but still boot the GUI at 720x400.
 
 Use `make test-gui-resolutions` when changing QEMU video setup, render profiles, or startup resolution handling. It validates startup modes through DRM logs and QEMU screendump size; live window resize still needs manual/hardware validation.
 

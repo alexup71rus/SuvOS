@@ -3,9 +3,10 @@
 ## Status
 
 This roadmap is still active.
-A future Chromium fork may absorb SuvOS-specific settings and browser chrome, but it
-does not solve guest GPU acceleration or WebGL by itself. Keep this track open
-until SuvOS has a VM backend with a real accelerated graphics path.
+The `SuvOS_Chromium` vendor fork exists and may later carry deeper SuvOS-specific
+browser chrome/settings patches, but that does not solve guest GPU acceleration
+or WebGL by itself. Keep this track open until SuvOS has a VM backend with a
+real accelerated graphics path.
 
 ## Current Fast Path
 
@@ -14,7 +15,7 @@ This avoids x86_64 TCG CPU emulation and uses:
 
 - Alpine `aarch64` kernel/assets/rootfs packages;
 - `aarch64` static SuvOS binaries;
-- linux-arm64 Admin Explorer Code artifact;
+- arm64 Admin Explorer Code artifact;
 - QEMU `qemu-system-aarch64` with `accel=hvf`;
 - `suvos.render=qemu-hvf`.
 
@@ -26,15 +27,15 @@ This keeps Cage/Chromium stable under QEMU-HVF.
 
 - `SUVOS_ARCH=aarch64 SUVOS_WITH_RUNTIMES=0 scripts/build-initramfs.sh`
 - `SUVOS_ARCH=aarch64 SUVOS_TEST_PROFILE=core scripts/test-boot.sh`
-- `AEC_TARGET_ARCH=arm64 ./scripts/build-aec-artifact.sh` in the sibling
-  `admin-explorer-code` checkout.
+- arm64 AEC artifact from the pinned `SuvOS_AEC` checkout under
+  `third_party/aec`.
 - `make initramfs-aec-arm64`
 - `SUVOS_ARCH=aarch64 SUVOS_TEST_PROFILE=aec ... scripts/test-boot.sh`
 - `SUVOS_ARCH=aarch64 ... scripts/test-gui-smoke.sh`
 
 ## Remaining Gap
 
-This is not true host GPU acceleration yet. Current Homebrew QEMU on this Mac
+This is not true host GPU acceleration yet. The current macOS QEMU-HVF dev path
 does not expose `virtio-gpu-gl-pci`, and the boot log still reports:
 
 - `features: -virgl`;
@@ -46,7 +47,7 @@ rutabaga or udmabuf support for blob resources.
 
 ## Next Track for Real GPU/WebGL
 
-Use the new `aarch64` build artifacts to create a bootable arm64 disk/ISO for
+Use the current `aarch64` build artifacts to create a bootable arm64 disk/ISO for
 Parallels or another VM backend with 3D acceleration. Parallels CLI does not
 provide a clean direct `-kernel/-initrd` boot path like QEMU, so the next step is
 an actual bootable image rather than another initramfs-only runner.

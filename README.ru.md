@@ -1,27 +1,68 @@
 # SuvOS
 
-SuvOS сейчас является минимальным x86_64 Linux-based прототипом ОС:
+SuvOS - прототип ОС на базе Linux с браузерным интерфейсом. Пользовательская
+оболочка строится вокруг обычного Chromium, а системные действия проходят через
+небольшой контролируемый слой SuvOS: `/init`, `/system/suvos`, `/data/suvos`,
+`suvosd`, `suvos-gateway`, web UI, манифесты приложений, локализацию и
+QEMU-сценарии запуска/проверки.
 
-- готовое ядро Alpine `v3.22` `linux-virt`;
-- собственный initramfs;
-- собственный `/init`;
-- консоль SuvOS;
-- BusyBox для базовых Unix-совместимых команд;
-- базовая ролевая система `setup`/`root`;
-- root bootstrap secret генерируется вне образа, а в образ попадает только hash;
-- статически собранный C++ daemon `suvosd` для привилегированных команд;
-- CLI `suvos`, который общается с `suvosd` через FIFO IPC;
-- внутренний Unix socket API в `/run/suvosd/control.sock` для будущего HTTP gateway;
-- диагностический socket client `suvosctl`;
-- framebuffer splash utility `suvos-splash` для первого графического smoke layer;
-- опциональный GUI-профиль с Wayland/Cage/Chromium browser shell;
-- localhost-only HTTP gateway `suvos-gateway` на `http://suv.os/`;
-- структурированные JSON endpoints для статуса, ролей и app registry;
-- первая web UI-страница, отдаваемая через `suvos-gateway`;
-- пустой app registry в `/system/suvos/apps/manifest.d` для будущих системных приложений;
-- read-only системная зона `/system/suvos` после boot;
-- writable-зона `/data/suvos` для будущих данных и расширений;
-- базовая локализация `ru` и `en`.
+Alpine `v3.22` используется как источник ядра, BusyBox, musl и системных
+пакетов. Это не продуктовая идентичность SuvOS.
+
+Обычный ручной запуск сейчас поднимает GUI-профиль: Wayland/Cage, Chromium,
+локальный gateway на `http://suv.os/` и Admin Explorer Code на
+`http://suv.os/aec/`. На Apple Silicon `make run` по умолчанию использует
+быстрый `aarch64` путь через QEMU-HVF; x86_64 QEMU/TCG оставлен как отдельный
+совместимый режим запуска.
+
+## Быстрый старт
+
+```sh
+make bootstrap-vendors
+make run
+```
+
+`make bootstrap-vendors` подтягивает закрепленные vendor-репозитории из
+`third_party/vendors.lock.json`:
+
+- `SuvOS_AEC` -> `third_party/aec`;
+- `SuvOS_Chromium` -> `third_party/chromium`.
+
+`make run` собирает GUI+AEC initramfs и запускает SuvOS в QEMU. В Chromium
+открываются две вкладки: `http://suv.os/` для текущей системной web UI и
+`http://suv.os/aec/` для AEC.
+
+## Требования
+
+Для сборки и запуска нужны:
+
+- Docker-совместимая среда выполнения, например Docker Desktop или OrbStack;
+- QEMU; на macOS обычно используется Homebrew QEMU;
+- Node.js/npm для проверки и сборки UI;
+- доступ к сети при первом получении Alpine assets и vendor-репозиториев.
+
+Повторные сборки используют локальные кэши, пока не меняются версии assets,
+списки пакетов или vendor refs.
+
+## Что уже есть
+
+- initramfs-only загрузка с собственным `/init`;
+- `/system/suvos` только для чтения после boot и writable `/data/suvos`;
+- `suvosd` как привилегированный C++ control plane;
+- `suvos` CLI и диагностический `suvosctl`;
+- Unix socket API `/run/suvosd/control.sock`;
+- `suvos-gateway`, который слушает только `127.0.0.1`;
+- JSON endpoints: `/health`, `/api/status`, `/api/roles`, `/api/apps`,
+  `/api/aec/status`;
+- TypeScript UI из `src/ui`, собранный и установленный в `/system/suvos/ui`;
+- Wayland/Cage/Chromium browser shell без GNOME/KDE/session manager;
+- Chromium profile в `/data/suvos/chromium`;
+- AEC как admin/debug explorer с root-доступом внутри гостевой VM;
+- registry манифестов `/system/suvos/apps/manifest.d/*.app`;
+- runtime-роли `setup` и `root`;
+- bootstrap secret вне образа: `build/secrets/root-bootstrap.secret`;
+- локализация `ru` и `en` через `SUVOS_LANG`;
+- быстрый core test, full runtime test, dev/root test, AEC smoke и GUI smoke.
 
 ## Сборка
 
@@ -29,178 +70,123 @@ SuvOS сейчас является минимальным x86_64 Linux-based п
 make
 ```
 
-Сборка получает kernel, минимальные graphics modules и static BusyBox из Alpine `v3.22`, а также собирает `suvosd`, `suvosctl`, `suvos-splash` и `suvos-gateway` через Docker/OrbStack. Python/Node runtime-пакеты ставятся только в явном full-профиле.
+`make` собирает полный initramfs-профиль. Сборка получает Alpine `v3.22` assets,
+собирает `suvosd`, `suvosctl`, `suvos-gateway`, `suvos-splash` и копирует
+готовые файлы UI.
 
-Alpine assets кэшируются в `build/cache`, `build/kernel` и `build/assets`. Если outputs уже есть, сборка не ходит в сеть. Принудительно обновить upstream assets можно так:
+Основные выходные файлы:
+
+```text
+build/kernel/vmlinuz-<arch>
+build/initramfs/suvos-initramfs.cpio.gz
+build/initramfs/suvos-initramfs-<arch>.cpio.gz
+```
+
+Кэши и сгенерированные файлы:
+
+```text
+build/cache
+build/kernel
+build/assets
+build/cache/rootfs-layers
+build/cache/apk
+```
+
+Полезные команды:
 
 ```sh
 SUVOS_REFRESH_ASSETS=1 make assets
-```
-
-Alpine runtime/GUI/AEC rootfs-слои тоже кэшируются. Первый `make test-full` или GUI/AEC запуск собирает tar-слой в `build/cache/rootfs-layers` и APK download cache в `build/cache/apk`; следующие сборки с тем же Alpine image и тем же списком пакетов просто распаковывают готовый слой без длинного списка `Installing ...`.
-
-Отдельные большие форки не хранятся внутри этого репозитория. Вместо submodules SuvOS использует `third_party/vendors.lock.json` и `make bootstrap-vendors`. Сейчас обязательных vendor checkout два: `SuvOS_AEC` в `third_party/aec` и `SuvOS_Chromium` в `third_party/chromium`. AEC отдает в SuvOS editor artifact, а `SuvOS_Chromium` - browser rootfs overlay artifact по pinned ref.
-
-Управление layer cache:
-
-```sh
 SUVOS_REFRESH_LAYER_CACHE=1 make run
 SUVOS_DISABLE_LAYER_CACHE=1 make run
 make clean-layer-cache
-make bootstrap-vendors
+make clean
+make distclean
 ```
 
-`make clean` layer cache не удаляет. `make clean-layer-cache` удаляет только Alpine package/rootfs layer cache. `make distclean` удаляет весь `build/`.
+`make clean` не удаляет secrets и package/rootfs layer cache. `make distclean`
+удаляет весь `build/`, включая сгенерированный bootstrap secret.
 
-UI bundle тоже кэшируется в `build/ui` по hash исходников `src/ui/system-settings`, `tsconfig.ui.json`, `package.json`, `package-lock.json` и `tools/build-ui.mjs`. Сборка initramfs только проверяет готовый bundle и копирует его в образ; сам bundle создается отдельно через `make ui`.
+## UI
 
-```sh
-make ui
-SUVOS_REFRESH_UI_BUNDLE=1 make ui
-```
-
-Результаты:
-
-```text
-build/kernel/vmlinuz-x86_64
-build/initramfs/suvos-initramfs.cpio.gz
-```
-
-## Проверка
-
-```sh
-make test
-```
-
-По умолчанию это быстрый core-тест. Он собирает initramfs без Python/Node runtime-пакетов, загружает SuvOS в QEMU с `suvos.autotest=1`, проверяет базовые команды, роли, пустой app registry, read-only защиту `/system/suvos`, затем выключает VM.
-
-Полный тест:
-
-```sh
-make test-full
-```
-
-`make test-full` устанавливает Python/Node runtime-зависимости в initramfs и проверяет наличие этих runtime-пакетов без временных demo-приложений.
-
-Явный developer/root-профиль:
-
-```sh
-make test-dev
-```
-
-`make test-dev` собирает GUI+AEC-профиль с `apk-tools`, проверяет positive-path для `suvos auth root <bootstrap-secret>` и подтверждает, что из root shell/AEC terminal доступна Alpine package manager-обвязка. Этот профиль не меняет обычный `make run`.
-
-Быстрый ручной serial-запуск без Python/Node:
-
-```sh
-make run-core
-```
-
-Проверка и сборка UI-слоя:
+Исходники UI находятся в `src/ui`. В initramfs попадает только собранный
+`build/ui`, который затем устанавливается в `/system/suvos/ui`.
 
 ```sh
 npm run ui:check
 npm run ui:fix
 make ui
+SUVOS_REFRESH_UI_BUNDLE=1 make ui
 ```
 
-UI-исходники лежат в `src/ui/system-settings`. В initramfs копируется только собранный dist из `build/ui`: `index.html`, `styles.css`, `app.js`.
-Если исходники UI не менялись, `make ui` выводит `ui bundle cache hit: build/ui` и не запускает TypeScript build повторно.
+Сборка initramfs не пересобирает исходники UI напрямую: она только проверяет и
+копирует `build/ui`.
 
-Ручной запуск в окне QEMU:
+## Vendor-форки
+
+Крупные внешние проекты не клонируются в основной репозиторий SuvOS и не
+коммитятся сюда исходниками. Они живут как отдельные локальные копии, закрепленные по SHA в
+`third_party/vendors.lock.json`, и отдают SuvOS только готовые артефакты.
+
+`SuvOS_AEC` - форк на базе Code - OSS для Admin Explorer Code:
 
 ```sh
-make run-graphics
-make run-core-graphics
+make aec
+SUVOS_AEC_REPO=/path/to/SuvOS_AEC make aec
+SUVOS_AEC_DIST=/path/to/aec-rootfs.tar.gz make run
+SUVOS_REFRESH_AEC=1 make aec
 ```
 
-На macOS текущий Homebrew QEMU открывает окно через `-display cocoa`; `make run-graphics` пока использует `std` VGA как самый совместимый ранний режим. В этом режиме init загружает минимальные DRM/framebuffer modules, затем запускает `suvos-splash`, который рисует framebuffer boot-loader с надписью `SuvOS` и текущим статусом. Если framebuffer недоступен, boot продолжается через serial console и пишет диагностику. Зеленый framebuffer-экран теперь зарезервирован для crash/fallback состояния, например если GUI shell вышел и система вернулась в serial console.
-
-Следующий GUI-этап описан в [SuvOS_CONCEPT.md](SuvOS_CONCEPT.md): Wayland runtime + Cage + обычный Chromium. Для MVP Chromium не должен запускаться в `--kiosk` или `--app`, потому что SuvOS shell должен сохранить вкладки, адресную строку и extensions UI. Cage нужен как минимальный compositor для одного maximized browser window без GNOME/KDE/window manager.
-
-Обычный ручной запуск SuvOS:
+`SuvOS_Chromium` - vendor-репозиторий для Chromium-артефакта:
 
 ```sh
-make bootstrap-vendors
-make run
-# или явно:
-make runos
-# текущий backend:
-make run-qemu
+make chromium
+SUVOS_CHROMIUM_REPO=/path/to/SuvOS_Chromium make chromium
+SUVOS_CHROMIUM_DIST=/path/to/chromium-rootfs.tar.gz make run
+SUVOS_REFRESH_CHROMIUM=1 make chromium
 ```
 
-`make run` и `make runos` собирают GUI-профиль с AEC, устанавливают Alpine-пакеты `cage`, `xwayland`, `dbus`, `seatd`, `eudev`, `su-exec`, fonts, cursor theme, ALSA diagnostics и Mesa/Wayland-зависимости, а сам Chromium берут из vendor checkout `third_party/chromium` по pinned ref из `third_party/vendors.lock.json`. На Apple Silicon `make run` по умолчанию использует быстрый `aarch64` QEMU-HVF профиль (`suvos.render=qemu-hvf`) с arm64 AEC artifact. Старый x86_64 QEMU/TCG runner оставлен явно как `make run-qemu-x86`. Это тяжелый профиль: Chromium и AEC попадают в initramfs, поэтому он не используется в `make test`. После первого успешного build GUI-пакеты берутся из rootfs layer cache, пока не изменится список пакетов или Alpine image. QEMU GUI-профиль по умолчанию использует USB HID keyboard/tablet/mouse через `qemu-xhci`, CoreAudio + virtio-sound для звука и запускает Cage с `-d`, чтобы по возможности убрать client-side window controls. `eudev` нужен не как desktop environment, а как device discovery слой для libinput/wlroots; без него kernel может видеть `/dev/input/event*`, но Cage не получает мышь.
+Текущий `SuvOS_Chromium` поставляет browser rootfs overlay. Более глубокие
+патчи Chromium должны развиваться в этом vendor-репозитории, не в основном
+репозитории SuvOS.
 
-Admin Explorer Code входит в обычный manual run:
+## Проверки
 
 ```sh
-make run
+make test
 ```
 
-`make run` запускает root-capable Admin Explorer Code внутри guest VM на `127.0.0.1:3030` и открывает Chromium с вкладками `http://suv.os/` и `http://suv.os/aec/`. AEC artifact по умолчанию собирается из checkout `third_party/aec`, который подтягивается через `make bootstrap-vendors` по pinned ref из `third_party/vendors.lock.json`. Для локальной разработки путь можно переопределить через `SUVOS_AEC_REPO`, а готовый artifact - через `SUVOS_AEC_DIST`. В этот профиль добавляется небольшой glibc payload для AEC server. `make run-gui` и `make run-gui-aec` сохранены как совместимые aliases для старых ручных команд.
-
-Альтернативный runner для Parallels зарезервирован отдельной командой:
+Быстрый core test без Python/Node runtime-пакетов. Он загружает SuvOS в QEMU и
+проверяет `suvosd`, `suvosctl`, HTTP gateway/UI, JSON endpoints, read-only
+`/system/suvos`, writable `/data/suvos`, отказ при неверной авторизации и
+пустой registry приложений.
 
 ```sh
-make run-parallels
+make test-full
 ```
 
-На Apple Silicon этот target пока intentionally останавливается с диагностикой: быстрый `aarch64` kernel/initramfs/AEC artifact уже есть, но Parallels CLI не дает прямой QEMU-style `-kernel/-initrd` boot для текущего initramfs-only прототипа. Следующий шаг для Parallels/GPU - bootable arm64 disk/ISO image и отдельная проверка 3D acceleration/WebGL. Для текущей ручной работы используется `make run` через QEMU-HVF.
-
-Cursor theme сейчас является заменяемой GUI-зависимостью, а не частью core-логики SuvOS. По умолчанию используется Alpine-пакет `adwaita-icon-theme`; заменить его можно так:
+`make test-full` добавляет Python/Node runtime-пакеты и проверяет их наличие в
+гостевой VM.
 
 ```sh
-SUVOS_CURSOR_THEME_PACKAGE=breeze-icons make run
+make test-dev
 ```
 
-Chromium в этом режиме запускается как Wayland-клиент через `--ozone-platform=wayland`. `xwayland` присутствует только потому, что текущий Alpine-пакет Cage 0.2.0 пытается поднять XWayland server при старте; это не означает, что SuvOS переходит на X11. Текущий `SuvOS_Chromium` vendor repo пока собирает отдельный browser artifact на базе Alpine `chromium` package, но сам browser уже приезжает в SuvOS не из main repo, а из отдельного pinned vendor checkout. Cage/Chromium запускаются не от root, а от системного пользователя `suvos-browser` с профилем в `/data/suvos/chromium`. `--no-sandbox` запрещен в default GUI boot; включить его можно только явным dev escape через `suvos.allow_no_sandbox=1` или `SUVOS_CHROMIUM_ALLOW_NO_SANDBOX=1`.
-
-Текущая вкладка `http://suv.os/` остается временной диагностической страницей control plane, а не финальной системой настроек. Закрытие Chromium через browser `X` пока не считается безопасным shutdown-flow. Settings UI ставит web-level `beforeunload` warning, но Chromium не гарантирует показ такого предупреждения при закрытии browser chrome. Поэтому default-поведение теперь recovery-first: если browser shell вышел или упал, `/init` перезапускает Cage/Chromium до 3 раз за 60 секунд. Если лимит исчерпан, SuvOS показывает зеленый crash/fallback screen и возвращается в serial console. Финальные OS-facing настройки, системная панель, shutdown/power UX и browser-chrome integration должны переехать в более глубокий Chromium patch/source fork или privileged internal page, а не наращиваться внутри текущей TypeScript-страницы.
-
-Render profile задается через `suvos.render=<profile>`. Если параметр не указан, используется `hardware`, чтобы реальная ОС не осталась навсегда в software-only режиме. QEMU на Mac M через Cocoa/TCG запускается с `suvos.render=qemu-tcg`, а arm64/HVF - с `suvos.render=qemu-hvf`: Chromium в этих профилях использует ANGLE `gl-egl` поверх Mesa llvmpipe, а Vulkan/VAAPI отключены. Это быстрый и стабильный VM dev path, но не настоящий host GPU/WebGL. Текущее состояние и следующий Parallels/3D acceleration трек описаны в `docs/gpu-webgl-roadmap.md`.
-
-`make run` на macOS автоматически выбирает стартовое разрешение примерно в 90% от logical-размера основного экрана. На текущем MacBook Pro это дает около `1552x1000` вместо старого `1280x800`. Авторазмер ограничен сверху значениями `SUVOS_GUI_MAX_WIDTH=1880` и `SUVOS_GUI_MAX_HEIGHT=1120`, чтобы внешний 4K/5K-monitor не создавал слишком тяжелый QEMU framebuffer.
-
-Стартовое разрешение GUI-профиля можно менять без правки скриптов:
+`make test-dev` собирает образ GUI+AEC с `apk-tools`, проверяет успешный
+`suvos auth root <bootstrap-secret>` и наличие файлов Alpine package manager в
+гостевой VM.
 
 ```sh
-SUVOS_GUI_SCALE_PERCENT=95 make run
-make run SUVOS_GUI_WIDTH=1440 SUVOS_GUI_HEIGHT=900
-SUVOS_GUI_MAX_WIDTH=0 SUVOS_GUI_MAX_HEIGHT=0 make run
-make test-gui-smoke SUVOS_GUI_WIDTH=1024 SUVOS_GUI_HEIGHT=768
+make test-aec-smoke
+make test-gui-smoke
 make test-gui-resolutions
 ```
 
-Это задает QEMU video device `virtio-vga,xres=...,yres=...,edid=on` и kernel mode-setting параметр `video=Virtual-1:...-32`, чтобы guest не только видел режим в списке DRM modes, но и реально стартовал в этом разрешении. `make test-gui-resolutions` автоматически проверяет стартовые режимы 1024x768 и 1440x900, включая размер QEMU screendump. Live resize окна QEMU зависит от связки QEMU Cocoa -> virtio-gpu -> Linux DRM -> wlroots/Cage и пока считается отдельной ручной/hardware-проверкой, а не гарантированной возможностью.
-
-Input/audio devices тоже можно переопределить:
-
-```sh
-make run SUVOS_GUI_INPUT_DEVICES="-device virtio-keyboard-pci -device virtio-tablet-pci"
-make run SUVOS_GUI_AUDIO_DEVICES="-audiodev coreaudio,id=suvos-audio,out.mixing-engine=on -device virtio-sound-pci,audiodev=suvos-audio,streams=1"
-```
-
-GUI smoke-test:
-
-```sh
-make test-gui-smoke
-```
-
-Он собирает тот же GUI+AEC-путь, что и обычный `make run`, и открывает окно QEMU на ограниченное время. Тест проверяет serial-лог на запуск Cage/Chromium, пользователя `suvos-browser`, render profile, input/audio devices, отсутствие default `--no-sandbox`, успешный `/health`, старт AEC-вкладки, ранний выход browser shell и fatal GL/GPU ошибки. В конце тест делает QEMU `screendump`, сверяет его размер с запрошенным стартовым разрешением и падает, если framebuffer остался на boot-loader или зеленом crash/fallback-экране.
-
-Сборка создает внешний bootstrap-secret:
-
-```text
-build/secrets/root-bootstrap.secret
-```
-
-Этот файл не входит в initramfs и игнорируется git. В образ копируется только:
-
-```text
-/system/suvos/security/root-bootstrap.sha256
-```
-
-`make clean` не удаляет `build/secrets`, а `make distclean` удаляет весь `build/` и приведет к генерации нового bootstrap-secret при следующей сборке.
+AEC smoke проверяет артефакт, маршрут gateway `/aec/`, product metadata без
+marketplace/cloud/chat defaults, нужные syntax/icon extensions и `node-pty`.
+GUI smoke проверяет запуск Cage/Chromium, AEC-вкладку, профиль рендеринга,
+пользователя `suvos-browser`, отсутствие штатного `--no-sandbox`,
+health-проверки и screendump. Resolution test прогоняет стартовые размеры
+1024x768 и 1440x900.
 
 ## Запуск
 
@@ -208,74 +194,91 @@ build/secrets/root-bootstrap.secret
 make run
 ```
 
-Это запускает QEMU GUI с Chromium и вкладками `http://suv.os/` / `http://suv.os/aec/`.
+Обычный ручной запуск собирает GUI+AEC профиль и открывает Chromium с вкладками
+`http://suv.os/` и `http://suv.os/aec/`.
 
-Явный developer/root GUI-профиль:
+На Apple Silicon `make run` выбирает `run-arm64`: `aarch64` kernel/assets,
+`aarch64` rootfs-пакеты, arm64-артефакт AEC и QEMU-HVF. На других хостах
+дефолтный режим - x86_64 QEMU/TCG.
+
+Явные режимы запуска:
 
 ```sh
+make run-arm64
+make run-qemu-x86
 make run-dev
-```
-
-`make run-dev` оставляет обычный `make run` lean, но добавляет в guest `apk-tools`, `/etc/apk/repositories` и `/etc/apk/keys`, чтобы под `root` можно было вручную ставить Alpine-пакеты из terminal/AEC. Никаких фоновых package/cloud обращений этот профиль сам по себе не делает; сеть используется только если пользователь сам запускает `apk`.
-
-Для старого headless serial console:
-
-```sh
+make run-core
 make run-console
+make run-graphics
+make run-core-graphics
+make run-gui
+make run-gui-aec
+make run-parallels
 ```
 
-Внутри консоли:
+`make run-gui` и `make run-gui-aec` сохранены как совместимые псевдонимы для
+старых ручных команд; основной GUI-путь сейчас `make run`.
+
+`make run-dev` добавляет в гостевую систему `apk-tools`, `/etc/apk/repositories` и
+`/etc/apk/keys`. Профиль не ставит пакеты сам: сеть используется только если
+пользователь вручную запускает `apk`.
+
+`make run-parallels` пока является защитной командой. Для текущего initramfs-only
+прототипа Parallels CLI не дает полезного прямого `-kernel/-initrd` пути; для
+реального Parallels/GPU трека нужен загрузочный arm64 disk/ISO-образ.
+
+## GUI параметры
+
+На macOS стартовое разрешение выбирается автоматически: примерно 90% основного
+экрана, с верхним clamp около 2K. Переопределения:
 
 ```sh
-help
-ls
-suvos status
-suvos roles
-suvos whoami
-suvos auth status
-suvos auth root <bootstrap-secret>
-suvos list
-suvosctl ping
-suvosctl status
-suvosctl list
-wget -q -O - http://suv.os/api/status
-wget -q -O - http://suv.os/api/roles
-wget -q -O - http://suv.os/api/apps
-wget -q -O - http://suv.os/
-python3 --version
-node --version
-poweroff
+SUVOS_GUI_SCALE_PERCENT=95 make run
+make run SUVOS_GUI_WIDTH=1440 SUVOS_GUI_HEIGHT=900
+SUVOS_GUI_MAX_WIDTH=0 SUVOS_GUI_MAX_HEIGHT=0 make run
 ```
 
-Файловая система первого этапа пока initramfs-only. Файлы, созданные вне read-only системной зоны, временные и пропадают после перезагрузки.
+Устройства ввода и звука QEMU тоже остаются переменными сборки и запуска:
 
-## Runtime-Схема
+```sh
+make run SUVOS_GUI_INPUT_DEVICES="-device virtio-keyboard-pci -device virtio-tablet-pci"
+make run SUVOS_GUI_AUDIO_DEVICES="-audiodev coreaudio,id=suvos-audio,out.mixing-engine=on -device virtio-sound-pci,audiodev=suvos-audio,streams=1"
+```
+
+Профиль рендеринга задается параметром ядра `suvos.render=<profile>`. Текущие
+профили разработки используют `qemu-tcg` или `qemu-hvf`; неявное значение по
+умолчанию остается `hardware`, чтобы реальный аппаратный путь не зафиксировался
+в режиме software rendering.
+
+## Runtime-схема
 
 ```text
-/init
-  +-- /system/suvos/bin/suvosd
-  |     +-- /run/suvosd/request
-  |     +-- /run/suvosd/control.sock
-  +-- /system/suvos/bin/suvosctl
-  +-- /system/suvos/bin/suvos-gateway
-  |     +-- http://suv.os/api/*
-  +-- /system/suvos/bin/suvos-splash
-  |     +-- optional /dev/fb0 loader/crash screen in suvos.graphics=1 mode
-  +-- /system/suvos/bin/suvos-start-gui
-  |     +-- optional Cage + ordinary Chromium shell in suvos.gui=1 mode
-  +-- /system/suvos/bin/suvos-shell
-        +-- suvos CLI
-              +-- /run/suvosd/request
-                    +-- suvosd проверяет и выполняет команды
+Linux kernel
+  -> /init
+      -> mount /system/suvos read-only
+      -> prepare /data/suvos
+      -> suvosd
+          -> FIFO CLI compatibility path
+          -> /run/suvosd/control.sock
+      -> suvos-gateway
+          -> 127.0.0.1:80
+          -> http://suv.os/
+          -> http://suv.os/api/*
+      -> suvos-start-aec      # GUI+AEC profile
+          -> 127.0.0.1:3030/aec
+      -> suvos-start-gui      # GUI profile
+          -> Cage
+              -> Chromium
 ```
 
-`suvosd` не блокирует основной daemon loop: каждый request обрабатывается worker-процессом. Количество workers ограничено, app execution сейчас имеет timeout 30 секунд, timed-out apps убиваются по process group, output ограничен по размеру.
+`suvosd` остается привилегированным управляющим слоем. CLI, UI и gateway не должны
+запускать произвольные системные пути напрямую.
 
-`suvosctl` нужен для проверки внутреннего Unix socket API. Основной интерактивный CLI пока остается `suvos`, а будущий HTTP gateway должен обращаться к `/run/suvosd/control.sock` так же, как `suvosctl`.
+`suvos-gateway` слушает только `127.0.0.1`. В гостевой системе `/etc/hosts`
+сопоставляет `suv.os` с loopback. Endpoints для браузера возвращают
+структурированный JSON, чтобы UI не парсил локализованный текст CLI.
 
-`suvos-gateway` - первый HTTP boundary для будущего web UI. Он слушает loopback-only `127.0.0.1:80`, а guest `/etc/hosts` мапит `suv.os` на `127.0.0.1`. Gateway отдает собранный UI dist из `/system/suvos/ui`, возвращает JSON и проксирует команды в `suvosd` через Unix socket. `/api/status`, `/api/roles` и `/api/apps` возвращают структурированные JSON-объекты для UI; `/api/run?name=<app>` остается command endpoint для будущих allowlisted manifests. `/health` теперь должен означать базовую готовность control plane: доступность `suvosd`, loopback API socket, read-only system root и наличие UI bundle, а не просто факт старта самого gateway-процесса. Текущие endpoints: `http://suv.os/`, `/ui/app.js`, `/ui/styles.css`, `/health`, `/api/status`, `/api/roles`, `/api/apps`, `/api/run?name=<app>`. Следующий security-шаг - session token для browser UI перед добавлением state-changing browser actions.
-
-Файлы SuvOS лежат здесь:
+## Файловая модель
 
 ```text
 /system/suvos/
@@ -286,20 +289,53 @@ poweroff
   config/
   lib/
   security/
+  aec/              # только в AEC profile
 
 /data/suvos/
+  aec/
   apps/
+  chromium/
   extensions/
   logs/
   state/
   tmp/
 ```
 
-`/opt/suvos` является compatibility symlink на `/system/suvos`.
+`/system/suvos` монтируется только для чтения во время boot. Изменение этой политики
+должно быть отдельным архитектурным решением, а не побочным эффектом разработки
+AEC, UI или инструментов упаковки.
 
-## App Manifests
+`/data/suvos` остается writable, но файлы и расширения из этой зоны не получают доверие
+автоматически. Проверка манифестов, роли и capabilities остаются явной
+границей.
 
-Приложения описываются manifest-файлами. Сейчас системный образ держит директорию registry пустой, без временных demo-приложений:
+`/opt/suvos` остается compatibility symlink на `/system/suvos`.
+
+## Управляющий слой и API
+
+Текущие важные endpoints:
+
+```text
+http://suv.os/
+http://suv.os/health
+http://suv.os/api/status
+http://suv.os/api/roles
+http://suv.os/api/apps
+http://suv.os/api/aec/status
+http://suv.os/aec/
+```
+
+`/health` означает готовность базового управляющего слоя: `suvosd`, socket API,
+system root в режиме read-only и UI bundle. Это не просто факт запуска
+gateway-процесса.
+
+Действия из браузера, меняющие состояние системы, должны появляться только
+после session token / capability layer. До этого UI остается диагностической
+панелью и не должен разрастаться в root-панель.
+
+## Манифесты приложений
+
+Системные приложения описываются файлами:
 
 ```text
 /system/suvos/apps/manifest.d/<name>.app
@@ -318,19 +354,106 @@ description.en=allowlisted system app
 description.ru=разрешенное системное приложение
 ```
 
-`suvosd` запускает только приложения из manifest registry, проверяет capability и канонизирует путь. TSV registry больше не является основным форматом; в коде оставлен только legacy fallback.
+`suvosd` запускает только приложения из manifest registry, проверяет capability
+и канонизирует executable path. Имена с `/` или `..` блокируются. TSV registry
+оставлен только как legacy fallback.
 
-## Роли и Bootstrap-Secret
+Текущий образ держит registry пустым: временные demo-приложения удалены.
 
-Текущий boot запускает SuvOS в runtime-роли `setup`. Эта роль может читать статус, смотреть список app manifests и делать попытку `auth root`. Полная runtime-роль `root` разблокируется командой:
+## Роли и bootstrap secret
+
+При загрузке SuvOS стартует в runtime-роли `setup`. Эта роль может читать
+status, roles, app list и выполнить попытку `auth root`.
+
+Root runtime-role разблокируется на текущую boot-сессию:
 
 ```sh
 suvos auth root <bootstrap-secret>
 ```
 
-Секрет лежит только вне образа в `build/secrets/root-bootstrap.secret`. Внутри read-only системной зоны хранится только SHA-256 hash, поэтому сам секрет не раскрывается из VM-образа.
+Секрет хранится только снаружи образа:
 
-Это прототипная bootstrap-модель. В будущей браузерной UI первый запуск должен требовать создание обычного пользователя, а bootstrap-secret использовать как proof-of-ownership/claim code. Для реального устройства секрет лучше генерировать при provisioning конкретного устройства, а не переиспользовать один общий секрет для всех образов.
+```text
+build/secrets/root-bootstrap.secret
+```
+
+В образ копируется только проверочный материал:
+
+```text
+/system/suvos/security/root-bootstrap.sha256
+```
+
+Для реального устройства это должно стать per-device provisioning / claim flow,
+а не общим секретом для массового образа.
+
+## Admin Explorer Code (AEC)
+
+Admin Explorer Code, или AEC, - это отдельная admin/debug web-среда внутри
+гостевой SuvOS VM. Он основан на Code - OSS fork `SuvOS_AEC`, поставляется в
+SuvOS как готовый vendor-артефакт и устанавливается в `/system/suvos/aec` в
+GUI+AEC профиле.
+
+AEC дает проводник и терминал с root-доступом к файловой системе гостевой VM:
+
+- дерево файлов гостевой VM;
+- вкладки редактора/просмотра;
+- просмотр текстов, логов и простых медиафайлов;
+- встроенный терминал через `node-pty`;
+- workspace, user data и extensions под `/data/suvos/aec` и
+  `/data/suvos/extensions/aec`.
+
+В обычном `make run` AEC доступен в Chromium на `http://suv.os/aec/`. В
+гостевой системе сервер AEC слушает `127.0.0.1:3030/aec`, а `suvos-gateway`
+проксирует `/aec/` и отдает `/api/aec/status`.
+
+AEC - осознанное исключение для разработки и администрирования гостевой VM. Он
+может иметь root-доступ к гостевой файловой системе, включая просмотр и
+изменение runtime state. Это не пользовательский file picker и не модель
+доверия для будущих обычных приложений.
+
+Ограничения:
+
+- AEC работает внутри гостевой VM и не дает доступ к файловой системе хоста;
+- AEC-артефакт живет в отдельном `SuvOS_AEC` repo, не в основном репозитории SuvOS;
+- AEC не должен ослаблять read-only boot policy для `/system/suvos`;
+- запись в `/system/suvos` из AEC требует отдельного явного изменения boot
+  policy;
+- policy-aware пользовательский file API должен идти отдельным треком через
+  `suvos-gateway -> suvosd`, а не через AEC.
+
+По умолчанию терминал AEC держится в режиме software rendering:
+
+```sh
+SUVOS_AEC_TERMINAL_GPU=off make run
+```
+
+Эксперименты с WebGL renderer терминала должны оставаться частью отдельного
+GPU/WebGL трека:
+
+```sh
+SUVOS_AEC_TERMINAL_GPU=auto make run
+```
+
+## Браузерная оболочка
+
+GUI-профиль запускает обычный Chromium как Wayland-клиент внутри Cage. SuvOS не
+использует GNOME, KDE или полноценный session manager для штатного UI-пути.
+
+Важные правила:
+
+- Chromium запускается не как root, а как `suvos-browser`;
+- состояние браузера хранится в `/data/suvos/chromium`;
+- `--no-sandbox` запрещен в штатной GUI-загрузке;
+- `--kiosk` и `--app` не используются для основного browser shell;
+- `xwayland` может присутствовать только как runtime-зависимость пакета Cage;
+- выход browser shell считается recoverable failure: `/init` перезапускает
+  Cage/Chromium до лимита, затем показывает crash/fallback screen и возвращает
+  serial console.
+
+Системная панель, power UX, browser-chrome controls, privileged settings и
+глубокий file picker должны решаться через `SuvOS_Chromium` patchset /
+privileged internal pages, а не через разрастание обычной web-страницы
+`http://suv.os/`.
 
 ## Локализация
 
@@ -347,10 +470,24 @@ SUVOS_LANG=ru
 SUVOS_LANG=en
 ```
 
-Текущий boot image по умолчанию использует русский. Системные сообщения и runtime-приложения должны читать `SUVOS_LANG`.
+Текущий boot image по умолчанию использует русский. Системные сообщения и
+runtime-приложения должны читать `SUVOS_LANG`.
 
-## Граница Alpine
+## GPU/WebGL
 
-SuvOS сейчас использует Alpine `v3.22` как upstream-источник kernel, BusyBox, musl и runtime-библиотек. Python/Node подтягиваются только в явном full-профиле. Собственный слой проекта: `/init`, `/system/suvos`, `/data/suvos`, `suvosd`, app manifests, локализация и будущая UI/service-модель.
+Текущий быстрый путь на Apple Silicon использует `aarch64` QEMU-HVF и render
+profile `qemu-hvf`. Это стабильный путь разработки в VM, но пока не настоящий
+путь с GPU/WebGL хоста: Chromium использует Mesa software fallback. Детали и критерии
+готовности ускоренного пути описаны в [docs/gpu-webgl-roadmap.md](docs/gpu-webgl-roadmap.md).
 
-Для прототипа такая зависимость нормальна. Позже ее можно заменить на Buildroot или другой контролируемый build pipeline.
+## Лицензия
+
+SuvOS распространяется под лицензией MIT. См. [LICENSE](LICENSE).
+
+## Безопасность
+
+- Не устанавливать SuvOS на хост-машину.
+- Тестировать через QEMU.
+- Не коммитить `build/` и package/rootfs caches.
+- Не раскрывать содержимое `build/secrets/root-bootstrap.secret`.
+- Не ослаблять read-only boot policy для `/system/suvos` без явного решения.
