@@ -35,6 +35,8 @@ Use Russian for user-facing explanations unless the user asks otherwise. Code id
 - Keep browser-facing read endpoints structured JSON; avoid parsing localized CLI text in UI code.
 - Keep UI source under `src/ui`; copy only built `build/ui` artifacts into the initramfs image.
 - Build/check the frontend bundle through `make ui` and `npm run ui:check`; initramfs assembly should only verify and copy `build/ui`, not rebuild UI sources directly.
+- Do not clone Chromium, VS Code/Code - OSS, OpenVSCode Server, or other large upstream browser/editor sources into this repository. Future forks must use separate vendor checkouts and only feed built artifacts or documented integration points into SuvOS.
+- Keep `admin-explorer-code` (AEC) as a separate opt-in root-capable guest admin/debug explorer. It may expose unrestricted guest filesystem access inside the VM by design; host filesystem access remains out of scope. The future policy-aware `suvos-gateway -> suvosd` file API belongs to the separate user-facing file picker/file manager track.
 - Keep `suvos-splash` framebuffer-only as the current graphics smoke baseline.
 - When moving to the browser shell stage, follow `SuvOS_CONCEPT.md`: Wayland runtime + Cage + ordinary Chromium, not `--kiosk`/`--app`, unless the user explicitly changes the browser-shell requirement.
 - Store the Chromium profile under `/data/suvos/chromium`; do not put browser user state in `/system/suvos`.
@@ -80,6 +82,8 @@ Useful manual run:
 ```sh
 make run
 ```
+
+On Apple Silicon hosts, treat `make run` / GUI-AEC verification as an `arm64` path by default. Use `x86_64` QEMU runs only as a compatibility track or when the user explicitly asks to validate x86 behavior.
 
 Fast manual run without Python/Node runtime packages:
 

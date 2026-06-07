@@ -1,6 +1,7 @@
 #include <arpa/inet.h>
 #include <algorithm>
 #include <cerrno>
+#include <cctype>
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
@@ -22,9 +23,11 @@ namespace {
 constexpr const char *kSuvosdSocket = "/run/suvosd/control.sock";
 constexpr const char *kUiRoot = "/system/suvos/ui";
 constexpr const char *kBindAddress = "127.0.0.1";
+constexpr const char *kAecHost = "127.0.0.1";
 constexpr int kPort = 80;
+constexpr int kAecPort = 3030;
 constexpr const char *kExitPrefix = "__SUVOSD_EXIT__:";
-constexpr size_t kMaxHttpRequestBytes = 8192;
+constexpr size_t kMaxHttpRequestBytes = 4 * 1024 * 1024;
 constexpr size_t kMaxSuvosdResponseBytes = 1024 * 1024;
 
 struct SuvosdResult {
@@ -182,6 +185,77 @@ std::string readAll(int fd, size_t maxBytes) {
   return response;
 }
 
+size_t httpHeaderEnd(const std::string &request, size_t *separatorSize) {
+  size_t headerEnd = request.find("\r\n\r\n");
+  if (headerEnd != std::string::npos) {
+    *separatorSize = 4;
+    return headerEnd;
+  }
+
+  headerEnd = request.find("\n\n");
+  if (headerEnd != std::string::npos) {
+    *separatorSize = 2;
+    return headerEnd;
+  }
+
+  *separatorSize = 0;
+  return std::string::npos;
+}
+
+std::string lowerAscii(const std::string &value) {
+  std::string out;
+  out.reserve(value.size());
+  for (unsigned char ch : value) {
+    out.push_back(static_cast<char>(std::tolower(ch)));
+  }
+  return out;
+}
+
+std::string trimAscii(const std::string &input) {
+  size_t begin = 0;
+  while (begin < input.size() && std::isspace(static_cast<unsigned char>(input[begin]))) {
+    ++begin;
+  }
+
+  size_t end = input.size();
+  while (end > begin && std::isspace(static_cast<unsigned char>(input[end - 1]))) {
+    --end;
+  }
+
+  return input.substr(begin, end - begin);
+}
+
+size_t contentLengthFromHeaders(const std::string &headers) {
+  std::istringstream lines(headers);
+  std::string line;
+  std::getline(lines, line);
+
+  while (std::getline(lines, line)) {
+    if (!line.empty() && line.back() == '\r') {
+      line.pop_back();
+    }
+
+    const size_t colon = line.find(':');
+    if (colon == std::string::npos) {
+      continue;
+    }
+
+    const std::string name = lowerAscii(trimAscii(line.substr(0, colon)));
+    if (name != "content-length") {
+      continue;
+    }
+
+    const std::string value = trimAscii(line.substr(colon + 1));
+    try {
+      return static_cast<size_t>(std::stoul(value));
+    } catch (...) {
+      return 0;
+    }
+  }
+
+  return 0;
+}
+
 std::string readHttpRequest(int fd) {
   std::string request;
   char buffer[512];
@@ -200,8 +274,19 @@ std::string readHttpRequest(int fd) {
 
     size_t remaining = kMaxHttpRequestBytes - request.size();
     request.append(buffer, std::min(static_cast<size_t>(n), remaining));
-    if (request.find("\r\n\r\n") != std::string::npos || request.find("\n\n") != std::string::npos) {
+    if (request.size() >= kMaxHttpRequestBytes) {
       break;
+    }
+
+    size_t separatorSize = 0;
+    const size_t headerEnd = httpHeaderEnd(request, &separatorSize);
+    if (headerEnd != std::string::npos) {
+      const std::string headers = request.substr(0, headerEnd);
+      const size_t contentLength = contentLengthFromHeaders(headers);
+      const size_t targetSize = headerEnd + separatorSize + contentLength;
+      if (request.size() >= targetSize || targetSize > kMaxHttpRequestBytes) {
+        break;
+      }
     }
   }
 
@@ -286,6 +371,302 @@ void sendBody(int fd, int status, const std::string &reason, const std::string &
   (void)writeAll(fd, response.str());
 }
 
+int connectTcp(const char *host, int port) {
+  int fd = socket(AF_INET, SOCK_STREAM, 0);
+  if (fd < 0) {
+    return -1;
+  }
+
+  sockaddr_in addr {};
+  addr.sin_family = AF_INET;
+  addr.sin_port = htons(port);
+  if (inet_pton(AF_INET, host, &addr.sin_addr) != 1) {
+    close(fd);
+    return -1;
+  }
+
+  if (connect(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0) {
+    close(fd);
+    return -1;
+  }
+
+  return fd;
+}
+
+bool streamFromTo(int from, int to) {
+  char buffer[8192];
+  while (true) {
+    ssize_t n = read(from, buffer, sizeof(buffer));
+    if (n == 0) {
+      return true;
+    }
+    if (n < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      return false;
+    }
+    if (!writeAll(to, std::string(buffer, static_cast<size_t>(n)))) {
+      return false;
+    }
+  }
+}
+
+void relayBidirectional(int client, int upstream) {
+  while (true) {
+    fd_set readSet;
+    FD_ZERO(&readSet);
+    FD_SET(client, &readSet);
+    FD_SET(upstream, &readSet);
+
+    const int maxFd = std::max(client, upstream);
+    int ready = select(maxFd + 1, &readSet, nullptr, nullptr, nullptr);
+    if (ready < 0) {
+      if (errno == EINTR) {
+        continue;
+      }
+      return;
+    }
+
+    char buffer[8192];
+    if (FD_ISSET(client, &readSet)) {
+      ssize_t n = read(client, buffer, sizeof(buffer));
+      if (n <= 0) {
+        return;
+      }
+      if (!writeAll(upstream, std::string(buffer, static_cast<size_t>(n)))) {
+        return;
+      }
+    }
+
+    if (FD_ISSET(upstream, &readSet)) {
+      ssize_t n = read(upstream, buffer, sizeof(buffer));
+      if (n <= 0) {
+        return;
+      }
+      if (!writeAll(client, std::string(buffer, static_cast<size_t>(n)))) {
+        return;
+      }
+    }
+  }
+}
+
+void clearReceiveTimeout(int fd) {
+  timeval timeout {};
+  setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+}
+
+bool isAecPath(const std::string &path) {
+  return path == "/aec" || path.rfind("/aec/", 0) == 0;
+}
+
+std::string normalizePathSegments(const std::string &path) {
+  std::vector<std::string> parts;
+  size_t cursor = 0;
+
+  while (cursor <= path.size()) {
+    const size_t slash = path.find('/', cursor);
+    const std::string part = path.substr(
+        cursor, slash == std::string::npos ? std::string::npos : slash - cursor);
+
+    if (part.empty() || part == ".") {
+      // Skip duplicate slashes and current-directory segments.
+    } else if (part == "..") {
+      if (!parts.empty()) {
+        parts.pop_back();
+      }
+    } else {
+      parts.push_back(part);
+    }
+
+    if (slash == std::string::npos) {
+      break;
+    }
+    cursor = slash + 1;
+  }
+
+  std::ostringstream out;
+  out << "/";
+  for (size_t i = 0; i < parts.size(); ++i) {
+    if (i > 0) {
+      out << "/";
+    }
+    out << parts[i];
+  }
+
+  const bool trailingSlash = path.size() > 1 && path.back() == '/';
+  if (trailingSlash && !parts.empty()) {
+    out << "/";
+  }
+
+  return out.str();
+}
+
+std::string normalizeHttpTarget(const std::string &target) {
+  const size_t queryStart = target.find('?');
+  const std::string path =
+      target.substr(0, queryStart == std::string::npos ? std::string::npos : queryStart);
+  const std::string query = queryStart == std::string::npos ? "" : target.substr(queryStart);
+  return normalizePathSegments(path) + query;
+}
+
+bool aecEnabled() {
+  return access("/system/suvos/aec/bin/admin-explorer-code-server", X_OK) == 0;
+}
+
+bool aecRunning() {
+  int fd = connectTcp(kAecHost, kAecPort);
+  if (fd < 0) {
+    return false;
+  }
+  close(fd);
+  return true;
+}
+
+std::string aecStatusJson() {
+  const bool enabled = aecEnabled();
+  const bool running = enabled && aecRunning();
+  std::ostringstream body;
+  body << "{";
+  body << "\"ok\":" << (enabled ? "true" : "false") << ",";
+  body << "\"enabled\":" << (enabled ? "true" : "false") << ",";
+  body << "\"running\":" << (running ? "true" : "false") << ",";
+  body << "\"host\":\"" << kAecHost << "\",";
+  body << "\"port\":" << kAecPort << ",";
+  body << "\"url\":\"/aec/\"";
+  body << "}\n";
+  return body.str();
+}
+
+bool requestWantsWebSocket(const std::string &headers) {
+  std::istringstream lines(headers);
+  std::string line;
+  std::getline(lines, line);
+
+  while (std::getline(lines, line)) {
+    if (!line.empty() && line.back() == '\r') {
+      line.pop_back();
+    }
+    const size_t colon = line.find(':');
+    if (colon == std::string::npos) {
+      continue;
+    }
+
+    const std::string name = lowerAscii(trimAscii(line.substr(0, colon)));
+    const std::string value = lowerAscii(trimAscii(line.substr(colon + 1)));
+    if (name == "upgrade" && value.find("websocket") != std::string::npos) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+std::string proxyRequestForAec(const std::string &request, bool *isWebSocket) {
+  size_t separatorSize = 0;
+  const size_t headerEnd = httpHeaderEnd(request, &separatorSize);
+  if (headerEnd == std::string::npos) {
+    return {};
+  }
+
+  const std::string headers = request.substr(0, headerEnd);
+  const std::string body = request.substr(headerEnd + separatorSize);
+  *isWebSocket = requestWantsWebSocket(headers);
+
+  std::istringstream lines(headers);
+  std::string requestLine;
+  std::getline(lines, requestLine);
+  if (!requestLine.empty() && requestLine.back() == '\r') {
+    requestLine.pop_back();
+  }
+
+  std::ostringstream out;
+  std::istringstream first(requestLine);
+  std::string method;
+  std::string target;
+  std::string version;
+  first >> method >> target >> version;
+  if (method.empty() || target.empty() || version.empty()) {
+    return {};
+  }
+
+  const std::string normalizedTarget = normalizeHttpTarget(target);
+  const size_t queryStart = normalizedTarget.find('?');
+  const std::string normalizedPath = normalizedTarget.substr(0, queryStart);
+  if (!isAecPath(normalizedPath)) {
+    return {};
+  }
+
+  out << method << " " << normalizedTarget << " " << version << "\r\n";
+  out << "Host: " << kAecHost << ":" << kAecPort << "\r\n";
+  out << "X-Forwarded-Host: suv.os\r\n";
+  out << "X-Forwarded-Proto: http\r\n";
+
+  std::string line;
+  while (std::getline(lines, line)) {
+    if (!line.empty() && line.back() == '\r') {
+      line.pop_back();
+    }
+    if (line.empty()) {
+      continue;
+    }
+
+    const size_t colon = line.find(':');
+    if (colon == std::string::npos) {
+      continue;
+    }
+
+    const std::string name = lowerAscii(trimAscii(line.substr(0, colon)));
+    if (name == "connection" || name == "host" || name == "keep-alive" ||
+        name == "proxy-connection") {
+      continue;
+    }
+
+    out << line << "\r\n";
+  }
+
+  out << "Connection: " << (*isWebSocket ? "Upgrade" : "close") << "\r\n";
+  out << "\r\n";
+  out << body;
+  return out.str();
+}
+
+void proxyAec(int client, const std::string &request) {
+  if (!aecEnabled()) {
+    sendJson(client, 404, "Not Found", "{\"ok\":false,\"error\":\"aec_not_enabled\"}\n");
+    return;
+  }
+
+  bool isWebSocket = false;
+  std::string upstreamRequest = proxyRequestForAec(request, &isWebSocket);
+  if (upstreamRequest.empty()) {
+    sendJson(client, 400, "Bad Request", "{\"ok\":false,\"error\":\"bad_aec_request\"}\n");
+    return;
+  }
+
+  int upstream = connectTcp(kAecHost, kAecPort);
+  if (upstream < 0) {
+    sendJson(client, 502, "Bad Gateway", "{\"ok\":false,\"error\":\"aec_unavailable\"}\n");
+    return;
+  }
+
+  if (!writeAll(upstream, upstreamRequest)) {
+    close(upstream);
+    sendJson(client, 502, "Bad Gateway", "{\"ok\":false,\"error\":\"aec_write_failed\"}\n");
+    return;
+  }
+
+  if (isWebSocket) {
+    clearReceiveTimeout(client);
+    clearReceiveTimeout(upstream);
+    relayBidirectional(client, upstream);
+  } else {
+    (void)streamFromTo(upstream, client);
+  }
+
+  close(upstream);
+}
+
 bool sendUiAsset(int fd, const std::string &path) {
   std::string filePath;
   std::string contentType;
@@ -359,15 +740,25 @@ void handleClient(int fd) {
   std::string version;
   first >> method >> target >> version;
 
-  if (method != "GET") {
-    sendJson(fd, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method_not_allowed\"}\n");
-    return;
-  }
-
   size_t queryStart = target.find('?');
   std::string path = target.substr(0, queryStart);
   std::string query = queryStart == std::string::npos ? "" : target.substr(queryStart + 1);
   auto queryValues = parseQuery(query);
+
+  if (path == "/api/aec/status") {
+    sendJson(fd, 200, "OK", aecStatusJson());
+    return;
+  }
+
+  if (isAecPath(path)) {
+    proxyAec(fd, request);
+    return;
+  }
+
+  if (method != "GET") {
+    sendJson(fd, 405, "Method Not Allowed", "{\"ok\":false,\"error\":\"method_not_allowed\"}\n");
+    return;
+  }
 
   if (sendUiAsset(fd, path)) {
     return;
@@ -444,6 +835,7 @@ int createServer(int port) {
 
 int main() {
   signal(SIGPIPE, SIG_IGN);
+  signal(SIGCHLD, SIG_IGN);
 
   int server = createServer(kPort);
   if (server < 0) {
@@ -472,7 +864,21 @@ int main() {
     if (client < 0) {
       continue;
     }
-    handleClient(client);
+
+    pid_t child = fork();
+    if (child < 0) {
+      handleClient(client);
+      close(client);
+      continue;
+    }
+
+    if (child == 0) {
+      close(server);
+      handleClient(client);
+      close(client);
+      _exit(0);
+    }
+
     close(client);
   }
 }
