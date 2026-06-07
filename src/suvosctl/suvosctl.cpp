@@ -120,7 +120,7 @@ void usage() {
   std::cerr << "Examples:\n";
   std::cerr << "  suvosctl ping\n";
   std::cerr << "  suvosctl status\n";
-  std::cerr << "  suvosctl run hello\n";
+  std::cerr << "  suvosctl list\n";
 }
 
 } // namespace

@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "$ROOT_DIR/scripts/suvos-arch.sh"
+ARCH="$(suvos_arch)"
 LOG="$ROOT_DIR/build/test-gui-smoke.log"
 MONITOR_SOCK="$ROOT_DIR/build/test-gui-smoke-monitor.sock"
 SCREENSHOT="$ROOT_DIR/build/test-gui-smoke.ppm"
@@ -13,16 +15,31 @@ GUI_KERNEL_VIDEO="${SUVOS_GUI_KERNEL_VIDEO:-video=${GUI_CONNECTOR}:${GUI_WIDTH}x
 GUI_INPUT_DEVICES="${SUVOS_GUI_INPUT_DEVICES:--device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0 -device usb-tablet,bus=xhci.0 -device usb-mouse,bus=xhci.0}"
 GUI_AUDIO_DEVICES="${SUVOS_GUI_AUDIO_DEVICES:--audiodev coreaudio,id=suvos-audio,out.mixing-engine=on -device virtio-sound-pci,audiodev=suvos-audio,streams=1}"
 GUI_EXTRA_QEMU_ARGS="${SUVOS_EXTRA_QEMU_ARGS:-$GUI_INPUT_DEVICES $GUI_AUDIO_DEVICES}"
+GUI_WITH_AEC="${SUVOS_GUI_WITH_AEC:-1}"
+GUI_VIDEO_DEVICE_DEFAULT="virtio-vga,xres=$GUI_WIDTH,yres=$GUI_HEIGHT,edid=on"
+if [ "$ARCH" = "aarch64" ]; then
+  GUI_VIDEO_DEVICE_DEFAULT="virtio-gpu-pci,xres=$GUI_WIDTH,yres=$GUI_HEIGHT,edid=on"
+fi
+CONSOLE="$(suvos_console "$ARCH")"
+RENDER_PROFILE="${SUVOS_RENDER_PROFILE:-qemu-tcg}"
+if [ "$ARCH" = "aarch64" ]; then
+  RENDER_PROFILE="${SUVOS_RENDER_PROFILE:-qemu-hvf}"
+fi
 
 mkdir -p "$ROOT_DIR/build"
 rm -f "$LOG" "$MONITOR_SOCK" "$SCREENSHOT"
 
+GUI_AEC_APPEND=""
+if [ "$GUI_WITH_AEC" = "1" ]; then
+  GUI_AEC_APPEND=" suvos.aec=1"
+fi
+
 SUVOS_MEMORY="${SUVOS_MEMORY:-3072M}" \
 SUVOS_CPUS="${SUVOS_CPUS:-4}" \
 SUVOS_DISPLAY="${SUVOS_DISPLAY:-cocoa}" \
-SUVOS_VIDEO_DEVICE="${SUVOS_VIDEO_DEVICE:-virtio-vga,xres=$GUI_WIDTH,yres=$GUI_HEIGHT,edid=on}" \
+SUVOS_VIDEO_DEVICE="${SUVOS_VIDEO_DEVICE:-$GUI_VIDEO_DEVICE_DEFAULT}" \
 SUVOS_EXTRA_QEMU_ARGS="$GUI_EXTRA_QEMU_ARGS -monitor unix:$MONITOR_SOCK,server,nowait" \
-SUVOS_APPEND="${SUVOS_APPEND:-console=ttyS0 rdinit=/init quiet loglevel=3 panic=-1 $GUI_KERNEL_VIDEO suvos.graphics=1 suvos.gui=1 suvos.render=qemu-tcg}" \
+SUVOS_APPEND="${SUVOS_APPEND:-console=$CONSOLE rdinit=/init quiet loglevel=3 panic=-1 $GUI_KERNEL_VIDEO suvos.graphics=1 suvos.gui=1 suvos.render=$RENDER_PROFILE$GUI_AEC_APPEND}" \
   "$ROOT_DIR/scripts/run-suvos.sh" >"$LOG" 2>&1 &
 
 pid=$!
@@ -62,6 +79,26 @@ if ! grep -q 'suvos-gui: starting Cage with Chromium' "$LOG"; then
   exit 1
 fi
 
+if ! grep -q '\[init\] gateway health ok' "$LOG"; then
+  echo "gui smoke failed: gateway health did not pass before GUI startup; log: $LOG" >&2
+  sed -n '1,260p' "$LOG" >&2
+  exit 1
+fi
+
+if [ "$GUI_WITH_AEC" = "1" ]; then
+  if ! grep -q '\[init\] aec status ok' "$LOG"; then
+    echo "gui smoke failed: AEC readiness did not pass in GUI profile; log: $LOG" >&2
+    sed -n '1,320p' "$LOG" >&2
+    exit 1
+  fi
+
+  if ! grep -q 'suvos-gui: urls=http://suv.os/ http://suv.os/aec/' "$LOG"; then
+    echo "gui smoke failed: GUI profile did not open the AEC tab; log: $LOG" >&2
+    sed -n '1,320p' "$LOG" >&2
+    exit 1
+  fi
+fi
+
 if grep -E 'libinput initialization failed|Unable to start the wlroots backend' "$LOG" >/dev/null; then
   echo "gui smoke failed: known Cage/wlroots startup error found; log: $LOG" >&2
   sed -n '1,260p' "$LOG" >&2
@@ -80,8 +117,8 @@ if ! grep -q 'suvos-gui: browser user: suvos-browser' "$LOG"; then
   exit 1
 fi
 
-if ! grep -q 'suvos-gui: render profile: qemu-tcg' "$LOG"; then
-  echo "gui smoke failed: qemu-tcg render profile not found; log: $LOG" >&2
+if ! grep -q "suvos-gui: render profile: $RENDER_PROFILE" "$LOG"; then
+  echo "gui smoke failed: $RENDER_PROFILE render profile not found; log: $LOG" >&2
   sed -n '1,260p' "$LOG" >&2
   exit 1
 fi

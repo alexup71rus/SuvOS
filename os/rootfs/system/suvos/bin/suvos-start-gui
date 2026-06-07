@@ -1,6 +1,10 @@
 #!/bin/sh
 set -u
 
+if [ -r /system/suvos/config/build.conf ]; then
+  . /system/suvos/config/build.conf
+fi
+
 find_chromium() {
   if [ -n "${SUVOS_CHROMIUM_BIN:-}" ] && command -v "$SUVOS_CHROMIUM_BIN" >/dev/null 2>&1; then
     command -v "$SUVOS_CHROMIUM_BIN"
@@ -232,12 +236,19 @@ for modes in /sys/class/drm/card*-*/modes; do
 done
 
 SUVOS_GUI_URL="${SUVOS_GUI_URL:-http://suv.os/}"
+SUVOS_GUI_URLS="${SUVOS_GUI_URLS:-}"
+if [ -z "$SUVOS_GUI_URLS" ]; then
+  SUVOS_GUI_URLS="$SUVOS_GUI_URL"
+  if [ "${SUVOS_WITH_AEC:-0}" = "1" ] || cmdline_has_arg "suvos.aec=1"; then
+    SUVOS_GUI_URLS="$SUVOS_GUI_URL http://suv.os/aec/"
+  fi
+fi
 SUVOS_CAGE_FLAGS="${SUVOS_CAGE_FLAGS:--d}"
 SUVOS_RENDER_PROFILE="${SUVOS_RENDER_PROFILE:-$(cmdline_value suvos.render)}"
 [ -n "$SUVOS_RENDER_PROFILE" ] || SUVOS_RENDER_PROFILE=hardware
 
 case "$SUVOS_RENDER_PROFILE" in
-  hardware|qemu-tcg) ;;
+  hardware|qemu-tcg|qemu-hvf) ;;
   *)
     echo "suvos-gui: unsupported render profile: $SUVOS_RENDER_PROFILE"
     exit 1
@@ -258,7 +269,7 @@ set -- "$CHROMIUM_BIN" \
   --disable-sync \
   --disable-dev-shm-usage
 
-if [ "$SUVOS_RENDER_PROFILE" = "qemu-tcg" ]; then
+if [ "$SUVOS_RENDER_PROFILE" = "qemu-tcg" ] || [ "$SUVOS_RENDER_PROFILE" = "qemu-hvf" ]; then
   CHROMIUM_ENV_PREFIX="LIBGL_ALWAYS_SOFTWARE=${LIBGL_ALWAYS_SOFTWARE:-1} MESA_LOADER_DRIVER_OVERRIDE=${MESA_LOADER_DRIVER_OVERRIDE:-llvmpipe}"
   set -- "$@" \
     --use-gl=angle \
@@ -294,10 +305,12 @@ if [ "$ALLOW_NO_SANDBOX" -eq 1 ]; then
   esac
 fi
 
-set -- "$@" "$SUVOS_GUI_URL"
+for url in $SUVOS_GUI_URLS; do
+  set -- "$@" "$url"
+done
 
 echo "suvos-gui: starting Cage with Chromium"
-echo "suvos-gui: url=$SUVOS_GUI_URL"
+echo "suvos-gui: urls=$SUVOS_GUI_URLS"
 printf 'suvos-gui: chromium argv:'
 for arg in "$@"; do
   printf ' [%s]' "$arg"

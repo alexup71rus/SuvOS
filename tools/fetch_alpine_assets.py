@@ -8,18 +8,31 @@ import shutil
 from pathlib import Path
 
 
-ARCH = "x86_64"
+ARCH_INPUT = os.environ.get("SUVOS_ARCH", "x86_64")
+ARCH_ALIASES = {
+  "amd64": "x86_64",
+  "x64": "x86_64",
+  "x86_64": "x86_64",
+  "arm64": "aarch64",
+  "aarch64": "aarch64",
+}
+if ARCH_INPUT not in ARCH_ALIASES:
+  raise SystemExit(f"unsupported SUVOS_ARCH: {ARCH_INPUT}")
+ARCH = ARCH_ALIASES[ARCH_INPUT]
 ALPINE_RELEASE = os.environ.get("SUVOS_ALPINE_RELEASE", "v3.22")
 REPO = f"https://dl-cdn.alpinelinux.org/alpine/{ALPINE_RELEASE}/main/{ARCH}"
 ROOT = Path(__file__).resolve().parents[1]
 CACHE = ROOT / "build" / "cache"
 ASSETS = ROOT / "build" / "assets"
-ASSET_SCHEMA = "6"
-KERNEL_OUT = ROOT / "build" / "kernel" / "vmlinuz-x86_64"
-GRAPHICS_MODULES_OUT = ROOT / "build" / "kernel" / "graphics-modules"
-GRAPHICS_MODULES_ORDER_OUT = ROOT / "build" / "kernel" / "graphics-modules.order"
-BUSYBOX_OUT = ASSETS / "busybox-x86_64"
-MANIFEST_OUT = ASSETS / "alpine-packages.txt"
+ASSET_SCHEMA = "7"
+KERNEL_OUT = ROOT / "build" / "kernel" / f"vmlinuz-{ARCH}"
+GRAPHICS_MODULES_OUT = ROOT / "build" / "kernel" / f"graphics-modules-{ARCH}"
+GRAPHICS_MODULES_ORDER_OUT = ROOT / "build" / "kernel" / f"graphics-modules-{ARCH}.order"
+BUSYBOX_OUT = ASSETS / f"busybox-{ARCH}"
+MANIFEST_OUT = ASSETS / f"alpine-packages-{ARCH}.txt"
+LEGACY_GRAPHICS_MODULES_OUT = ROOT / "build" / "kernel" / "graphics-modules"
+LEGACY_GRAPHICS_MODULES_ORDER_OUT = ROOT / "build" / "kernel" / "graphics-modules.order"
+LEGACY_MANIFEST_OUT = ASSETS / "alpine-packages.txt"
 REFRESH_ASSETS = os.environ.get("SUVOS_REFRESH_ASSETS", "0") == "1"
 GRAPHICS_MODULE_TARGETS = [
   "kernel/drivers/gpu/drm/tiny/bochs.ko.gz",
@@ -77,7 +90,7 @@ def fetch_package(packages: dict[str, dict[str, str]], name: str) -> Path:
 
   version = fields["V"]
   package_file = f"{name}-{version}.apk"
-  package_path = CACHE / package_file
+  package_path = CACHE / ARCH / package_file
   download(f"{REPO}/{package_file}", package_path)
   return package_path
 
@@ -140,7 +153,13 @@ def collect_module_order(deps: dict[str, list[str]], targets: list[str]) -> list
     order.append(module)
 
   for target in targets:
+    if target not in deps:
+      print(f"warning: kernel module target not found for {ARCH}: {target}")
+      continue
     visit(target)
+
+  if not order:
+    raise RuntimeError("no kernel modules were collected")
 
   return order
 
@@ -196,9 +215,29 @@ def assets_ready() -> bool:
   )
   return (
     fields.get("schema") == ASSET_SCHEMA
+    and fields.get("arch") == ARCH
     and fields.get("release") == ALPINE_RELEASE
     and graphics_modules_ready()
   )
+
+
+def update_legacy_x86_links() -> None:
+  if ARCH != "x86_64":
+    return
+
+  for legacy, current in [
+    (LEGACY_GRAPHICS_MODULES_OUT, GRAPHICS_MODULES_OUT),
+    (LEGACY_GRAPHICS_MODULES_ORDER_OUT, GRAPHICS_MODULES_ORDER_OUT),
+    (LEGACY_MANIFEST_OUT, MANIFEST_OUT),
+  ]:
+    if legacy == current:
+      continue
+    if legacy.is_symlink() or legacy.is_file():
+      legacy.unlink()
+    elif legacy.is_dir():
+      shutil.rmtree(legacy)
+    legacy.parent.mkdir(parents=True, exist_ok=True)
+    legacy.symlink_to(current.relative_to(legacy.parent))
 
 
 def main() -> None:
@@ -207,6 +246,7 @@ def main() -> None:
   KERNEL_OUT.parent.mkdir(parents=True, exist_ok=True)
 
   if assets_ready():
+    update_legacy_x86_links()
     print(f"kernel: {KERNEL_OUT}")
     print(f"busybox: {BUSYBOX_OUT}")
     print(f"graphics-modules: {GRAPHICS_MODULES_OUT}")
@@ -214,7 +254,7 @@ def main() -> None:
     return
 
   release_name = ALPINE_RELEASE.replace("/", "_")
-  index_path = CACHE / f"APKINDEX.{release_name}.main.x86_64.tar.gz"
+  index_path = CACHE / f"APKINDEX.{release_name}.main.{ARCH}.tar.gz"
   download(f"{REPO}/APKINDEX.tar.gz", index_path, force=REFRESH_ASSETS)
   packages = read_apkindex(index_path)
 
@@ -228,12 +268,14 @@ def main() -> None:
   lines = [
     f"schema={ASSET_SCHEMA}",
     f"repo={REPO}",
+    f"arch={ARCH}",
     f"release={ALPINE_RELEASE}",
     f"linux-virt={packages['linux-virt']['V']}",
     f"busybox-static={packages['busybox-static']['V']}",
     f"graphics-modules={len(GRAPHICS_MODULES_ORDER_OUT.read_text(encoding='utf-8').splitlines())}",
   ]
   MANIFEST_OUT.write_text("\n".join(lines) + "\n", encoding="utf-8")
+  update_legacy_x86_links()
 
   print(f"kernel: {KERNEL_OUT}")
   print(f"busybox: {BUSYBOX_OUT}")

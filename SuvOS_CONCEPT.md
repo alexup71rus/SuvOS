@@ -284,8 +284,10 @@ suvos status
 ```sh
 make test       # быстрый core boot/control-plane test без Python/Node runtime
 make test-full  # полный boot/runtime test с Python/Node
+make test-dev   # GUI+AEC developer/root профиль с apk-tools и positive auth-root autotest
 make run        # обычный GUI запуск SuvOS с Chromium и AEC
 make runos      # явный alias для обычного GUI запуска
+make run-dev    # явный developer/root GUI профиль с apk-tools
 make run-qemu-x86 # старый x86_64 QEMU/TCG backend
 make run-parallels # guarded Parallels runner; требует bootable arm64 disk/ISO
 make run-console # serial/debug запуск full runtime image

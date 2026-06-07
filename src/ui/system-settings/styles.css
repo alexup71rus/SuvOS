@@ -177,41 +177,6 @@ h2 {
   min-height: 220px;
 }
 
-.app-list {
-  display: grid;
-  gap: 8px;
-}
-
-.app-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  min-height: 46px;
-  border-top: 1px solid var(--line);
-  padding-top: 8px;
-}
-
-.app-row:first-child {
-  border-top: 0;
-  padding-top: 0;
-}
-
-.app-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-weight: 700;
-}
-
-.app-desc {
-  margin-top: 2px;
-  color: var(--muted);
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-
 .error {
   color: var(--danger);
 }

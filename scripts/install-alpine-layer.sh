@@ -12,9 +12,12 @@ PACKAGES="$3"
 POST_INSTALL="$4"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+. "$ROOT_DIR/scripts/suvos-arch.sh"
+ARCH="$(suvos_arch)"
+DOCKER_PLATFORM="$(suvos_docker_platform "$ARCH")"
 ALPINE_VERSION="${SUVOS_ALPINE_VERSION:-3.22}"
 IMAGE="${SUVOS_ALPINE_IMAGE:-alpine:$ALPINE_VERSION}"
-LAYER_SCHEMA="1"
+LAYER_SCHEMA="2"
 REFRESH_LAYER_CACHE="${SUVOS_REFRESH_LAYER_CACHE:-0}"
 DISABLE_LAYER_CACHE="${SUVOS_DISABLE_LAYER_CACHE:-0}"
 
@@ -34,7 +37,7 @@ EOF
     exit 1
   fi
 
-  docker run --rm --platform linux/amd64 \
+  docker run --rm --platform "$DOCKER_PLATFORM" \
     -e LAYER_PACKAGES="$PACKAGES" \
     -e LAYER_POST_INSTALL="$POST_INSTALL" \
     -v "$target_root:/suvos-root" \
@@ -62,6 +65,8 @@ hash_layer_key() {
   {
     printf 'schema=%s\n' "$LAYER_SCHEMA"
     printf 'layer=%s\n' "$LAYER_NAME"
+    printf 'arch=%s\n' "$ARCH"
+    printf 'docker_platform=%s\n' "$DOCKER_PLATFORM"
     printf 'image=%s\n' "$IMAGE"
     printf 'alpine_version=%s\n' "$ALPINE_VERSION"
     printf 'packages=%s\n' "$PACKAGES"
@@ -80,7 +85,7 @@ hash_layer_key() {
 cache_key="$(hash_layer_key)"
 
 LAYER_CACHE_DIR="$ROOT_DIR/build/cache/rootfs-layers"
-APK_CACHE_DIR="$ROOT_DIR/build/cache/apk/$ALPINE_VERSION"
+APK_CACHE_DIR="$ROOT_DIR/build/cache/apk/$ALPINE_VERSION/$ARCH"
 LAYER_TAR="$LAYER_CACHE_DIR/$LAYER_NAME-$cache_key.tar"
 LAYER_META="$LAYER_TAR.meta"
 
@@ -119,6 +124,8 @@ schema=$LAYER_SCHEMA
 layer=$LAYER_NAME
 image=$IMAGE
 alpine_version=$ALPINE_VERSION
+arch=$ARCH
+docker_platform=$DOCKER_PLATFORM
 packages=$PACKAGES
 cache_key=$cache_key
 EOF

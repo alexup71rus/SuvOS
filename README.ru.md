@@ -79,6 +79,14 @@ make test-full
 
 `make test-full` устанавливает Python/Node runtime-зависимости в initramfs и проверяет наличие этих runtime-пакетов без временных demo-приложений.
 
+Явный developer/root-профиль:
+
+```sh
+make test-dev
+```
+
+`make test-dev` собирает GUI+AEC-профиль с `apk-tools`, проверяет positive-path для `suvos auth root <bootstrap-secret>` и подтверждает, что из root shell/AEC terminal доступна Alpine package manager-обвязка. Этот профиль не меняет обычный `make run`.
+
 Быстрый ручной serial-запуск без Python/Node:
 
 ```sh
@@ -174,7 +182,7 @@ GUI smoke-test:
 make test-gui-smoke
 ```
 
-Он тоже собирает GUI-профиль и открывает окно QEMU на ограниченное время. Тест проверяет serial-лог на запуск Cage/Chromium, пользователя `suvos-browser`, render profile, input/audio devices, отсутствие default `--no-sandbox`, ранний выход browser shell и fatal GL/GPU ошибки. В конце тест делает QEMU `screendump`, сверяет его размер с запрошенным стартовым разрешением и падает, если framebuffer остался на boot-loader или зеленом crash/fallback-экране.
+Он собирает тот же GUI+AEC-путь, что и обычный `make run`, и открывает окно QEMU на ограниченное время. Тест проверяет serial-лог на запуск Cage/Chromium, пользователя `suvos-browser`, render profile, input/audio devices, отсутствие default `--no-sandbox`, успешный `/health`, старт AEC-вкладки, ранний выход browser shell и fatal GL/GPU ошибки. В конце тест делает QEMU `screendump`, сверяет его размер с запрошенным стартовым разрешением и падает, если framebuffer остался на boot-loader или зеленом crash/fallback-экране.
 
 Сборка создает внешний bootstrap-secret:
 
@@ -197,6 +205,14 @@ make run
 ```
 
 Это запускает QEMU GUI с Chromium и вкладками `http://suv.os/` / `http://suv.os/aec/`.
+
+Явный developer/root GUI-профиль:
+
+```sh
+make run-dev
+```
+
+`make run-dev` оставляет обычный `make run` lean, но добавляет в guest `apk-tools`, `/etc/apk/repositories` и `/etc/apk/keys`, чтобы под `root` можно было вручную ставить Alpine-пакеты из terminal/AEC. Никаких фоновых package/cloud обращений этот профиль сам по себе не делает; сеть используется только если пользователь сам запускает `apk`.
 
 Для старого headless serial console:
 

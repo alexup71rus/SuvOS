@@ -1,5 +1,5 @@
 SuvOS developer preview
-Kernel: Linux x86_64
+Kernel: Linux
 Userspace: initramfs + BusyBox + SuvOS shell
 
 Type "help" for available SuvOS commands.

@@ -2,12 +2,13 @@
 
 SUVOS_LANG="${SUVOS_LANG:-ru}"
 SUVOS_LANG="${SUVOS_LANG%%_*}"
+SUVOS_KERNEL_ARCH="$(uname -m 2>/dev/null || echo unknown)"
 
 suvos_t() {
   key="$1"
   case "$SUVOS_LANG:$key" in
     ru:motd.title) echo "SuvOS developer preview" ;;
-    ru:motd.kernel) echo "Ядро: Linux x86_64" ;;
+    ru:motd.kernel) echo "Ядро: Linux $SUVOS_KERNEL_ARCH" ;;
     ru:motd.userspace) echo "Userspace: initramfs + BusyBox + SuvOS shell" ;;
     ru:motd.help) echo "Введите \"help\", чтобы увидеть доступные команды." ;;
     ru:shell.ready) echo "Консоль SuvOS готова." ;;
@@ -45,10 +46,7 @@ EOF
   suvos run <name> [args...]
 
 Примеры:
-  suvos run hello
-  suvos run cpp-hello
-  suvos run py-hello
-  suvos run node-hello
+  suvos list
 EOF
       ;;
     ru:cli.daemon_down) echo "suvos: suvosd не запущен" ;;
@@ -56,7 +54,7 @@ EOF
     ru:cli.malformed) echo "suvos: некорректный ответ от suvosd" ;;
     ru:cli.unknown) printf 'suvos: неизвестная команда: %s\n' "$2" ;;
     en:motd.title|*:motd.title) echo "SuvOS developer preview" ;;
-    en:motd.kernel|*:motd.kernel) echo "Kernel: Linux x86_64" ;;
+    en:motd.kernel|*:motd.kernel) echo "Kernel: Linux $SUVOS_KERNEL_ARCH" ;;
     en:motd.userspace|*:motd.userspace) echo "Userspace: initramfs + BusyBox + SuvOS shell" ;;
     en:motd.help|*:motd.help) echo "Type \"help\" for available SuvOS commands." ;;
     en:shell.ready|*:shell.ready) echo "SuvOS console is ready." ;;
@@ -94,10 +92,7 @@ Usage:
   suvos run <name> [args...]
 
 Examples:
-  suvos run hello
-  suvos run cpp-hello
-  suvos run py-hello
-  suvos run node-hello
+  suvos list
 EOF
       ;;
     en:cli.daemon_down|*:cli.daemon_down) echo "suvos: suvosd is not running" ;;

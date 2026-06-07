@@ -2,23 +2,49 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-QEMU_BIN="${QEMU_BIN:-/opt/homebrew/bin/qemu-system-x86_64}"
-KERNEL="${SUVOS_KERNEL:-$ROOT_DIR/build/kernel/vmlinuz-x86_64}"
-INITRD="${SUVOS_INITRD:-$ROOT_DIR/build/initramfs/suvos-initramfs.cpio.gz}"
+. "$ROOT_DIR/scripts/suvos-arch.sh"
+ARCH="$(suvos_arch)"
+DEFAULT_ACCEL="$(suvos_default_accel "$ARCH")"
+QEMU_BIN="${QEMU_BIN:-$(suvos_qemu_bin "$ARCH")}"
+KERNEL="${SUVOS_KERNEL:-$(suvos_kernel_path "$ROOT_DIR" "$ARCH")}"
+INITRD="${SUVOS_INITRD:-$(suvos_initrd_path "$ROOT_DIR" "$ARCH")}"
 TEST_PROFILE="${SUVOS_TEST_PROFILE:-boot}"
 LOG="${SUVOS_TEST_LOG:-$ROOT_DIR/build/test-boot-$TEST_PROFILE.log}"
 TIMEOUT_SECONDS="${SUVOS_TEST_TIMEOUT:-180}"
+MEMORY="${SUVOS_TEST_MEMORY:-1024M}"
+CPUS="${SUVOS_TEST_CPUS:-1}"
+APPEND_EXTRA="${SUVOS_APPEND_EXTRA:-}"
+ACCEL="${SUVOS_ACCEL:-$DEFAULT_ACCEL}"
+CPU_MODEL="${SUVOS_CPU_MODEL:-$(suvos_default_cpu_model "$ARCH" "$ACCEL")}"
+MACHINE="${SUVOS_MACHINE:-$(suvos_default_machine "$ARCH")}"
+CONSOLE="$(suvos_console "$ARCH")"
+ROOT_BOOTSTRAP_SECRET_FILE="${SUVOS_ROOT_BOOTSTRAP_SECRET_FILE:-$ROOT_DIR/build/secrets/root-bootstrap.secret}"
+AUTOTEST_ROOT_SECRET=""
+
+if [ -r "$ROOT_BOOTSTRAP_SECRET_FILE" ]; then
+  AUTOTEST_ROOT_SECRET="$(tr -d '\r\n' < "$ROOT_BOOTSTRAP_SECRET_FILE")"
+fi
+
+if [ ! -f "$INITRD" ] && [ "$ARCH" = "x86_64" ] && [ -f "$ROOT_DIR/build/initramfs/suvos-initramfs.cpio.gz" ]; then
+  INITRD="$ROOT_DIR/build/initramfs/suvos-initramfs.cpio.gz"
+fi
+
+MACHINE_ARG="$MACHINE"
+case ",$MACHINE_ARG," in
+  *,accel=*) ;;
+  *) MACHINE_ARG="$MACHINE_ARG,accel=$ACCEL" ;;
+esac
 
 rm -f "$LOG"
 
 "$QEMU_BIN" \
-  -machine q35,accel=tcg \
-  -cpu max \
-  -m 1024M \
-  -smp 1 \
+  -machine "$MACHINE_ARG" \
+  -cpu "$CPU_MODEL" \
+  -m "$MEMORY" \
+  -smp "$CPUS" \
   -kernel "$KERNEL" \
   -initrd "$INITRD" \
-  -append "console=ttyS0 rdinit=/init quiet loglevel=3 panic=-1 suvos.autotest=1" \
+  -append "console=$CONSOLE rdinit=/init quiet loglevel=3 panic=-1 suvos.autotest=1 ${AUTOTEST_ROOT_SECRET:+suvos.autotest_root_secret=$AUTOTEST_ROOT_SECRET }$APPEND_EXTRA" \
   -display none \
   -serial "file:$LOG" \
   -monitor none \

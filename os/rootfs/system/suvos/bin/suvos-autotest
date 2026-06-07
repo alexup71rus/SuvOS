@@ -8,6 +8,19 @@ if [ -r /system/suvos/config/build.conf ]; then
   . /system/suvos/config/build.conf
 fi
 
+cmdline_value() {
+  key="$1"
+  for arg in $(cat /proc/cmdline 2>/dev/null || true); do
+    case "$arg" in
+      "$key"=*)
+        printf '%s\n' "${arg#*=}"
+        return 0
+        ;;
+    esac
+  done
+  return 0
+}
+
 echo "SUVOS_AUTOTEST_BEGIN"
 echo "profile=$SUVOS_BUILD_PROFILE"
 echo "pwd=$(pwd)"
@@ -72,6 +85,19 @@ if suvos auth root wrong-bootstrap-secret >/tmp/suvos-auth-test.out 2>&1; then
   exit 1
 fi
 cat /tmp/suvos-auth-test.out
+autotest_root_secret="$(cmdline_value suvos.autotest_root_secret)"
+if [ -n "$autotest_root_secret" ]; then
+  suvos auth root "$autotest_root_secret" >/tmp/suvos-auth-root.out 2>&1
+  cat /tmp/suvos-auth-root.out
+  test "$(suvos whoami | tr -d '\r\n')" = "root"
+  test "$(suvosctl whoami | tr -d '\r\n')" = "root"
+  wget -q -O /tmp/suvos-http-roles-root.out http://suv.os/api/roles
+  cat /tmp/suvos-http-roles-root.out
+  grep -q '"currentRole":"root"' /tmp/suvos-http-roles-root.out
+  grep -q '"rootSessionUnlocked":true' /tmp/suvos-http-roles-root.out
+else
+  echo "ROOT_AUTH_POSITIVE_TEST_SKIPPED"
+fi
 suvos list
 if touch /system/suvos/.rw-test >/tmp/suvos-ro-test.out 2>&1; then
   echo "system root is writable"
@@ -92,6 +118,12 @@ if [ "$SUVOS_WITH_RUNTIMES" = "1" ]; then
   node --version
 else
   echo "RUNTIME_TESTS_SKIPPED"
+fi
+if [ "${SUVOS_WITH_DEVTOOLS:-0}" = "1" ]; then
+  apk --version
+  test -s /etc/apk/repositories
+  test -d /etc/apk/keys
+  echo "DEVTOOLS_PASS"
 fi
 if [ "${SUVOS_WITH_AEC:-0}" = "1" ]; then
   test -x /system/suvos/aec/bin/admin-explorer-code-server

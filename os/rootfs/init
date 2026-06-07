@@ -28,6 +28,22 @@ exec </dev/console >/dev/console 2>&1
 
 /bin/busybox --install -s /bin 2>/dev/null || true
 
+fatal_boot() {
+  echo "[init] fatal: $1" >/dev/console
+
+  if grep -qw 'suvos.graphics=1' /proc/cmdline 2>/dev/null; then
+    /system/suvos/bin/suvos-load-graphics >/tmp/suvos-graphics.log 2>&1 || true
+    /system/suvos/bin/suvos-splash --mode crash --message "$1" >/tmp/suvos-splash.log 2>&1 || true
+  fi
+
+  poweroff -f
+  sleep 5
+  reboot -f
+  while true; do
+    sleep 60
+  done
+}
+
 prepare_data_root() {
   mount -t tmpfs -o mode=0755,size=64m suvos-data /data 2>/tmp/suvos-data.err || true
 
@@ -48,21 +64,21 @@ prepare_data_root() {
 
 make_system_readonly() {
   mount -o bind /system/suvos /system/suvos 2>/tmp/suvos-ro.err || {
-    echo "[init] warning: cannot bind-mount /system/suvos read-only" >/dev/console
+    echo "[init] error: cannot bind-mount /system/suvos read-only" >/dev/console
     cat /tmp/suvos-ro.err >/dev/console 2>/dev/null || true
-    return 0
+    return 1
   }
 
   mount -o remount,ro,bind /system/suvos /system/suvos 2>/tmp/suvos-ro.err || \
     mount -o remount,ro /system/suvos 2>/tmp/suvos-ro.err || {
-      echo "[init] warning: cannot remount /system/suvos read-only" >/dev/console
+      echo "[init] error: cannot remount /system/suvos read-only" >/dev/console
       cat /tmp/suvos-ro.err >/dev/console 2>/dev/null || true
-      return 0
+      return 1
     }
 }
 
 prepare_data_root
-make_system_readonly
+make_system_readonly || fatal_boot 'SYSTEM ROOT NOT READ ONLY'
 
 if grep -qw 'suvos.graphics=1' /proc/cmdline 2>/dev/null; then
   /system/suvos/bin/suvos-load-graphics >/tmp/suvos-graphics.log 2>&1 || true
@@ -85,6 +101,14 @@ ifconfig lo 127.0.0.1 up 2>/tmp/suvos-lo.err || true
 /system/suvos/bin/suvos-gateway &
 
 gateway_ready=0
+require_gateway_health=0
+if grep -qw 'suvos.autotest=1' /proc/cmdline 2>/dev/null || \
+  grep -qw 'suvos.gui=1' /proc/cmdline 2>/dev/null || \
+  [ "${SUVOS_WITH_AEC:-0}" = "1" ] || \
+  grep -qw 'suvos.aec=1' /proc/cmdline 2>/dev/null; then
+  require_gateway_health=1
+fi
+
 for _ in 1 2 3 4 5; do
   if wget -q -O /tmp/suvos-gateway-health http://suv.os/health >/dev/null 2>&1; then
     gateway_ready=1
@@ -95,20 +119,35 @@ for _ in 1 2 3 4 5; do
 done
 
 if [ "$gateway_ready" -ne 1 ]; then
-  echo "[init] warning: gateway health check did not pass" >/dev/console
+  echo "[init] error: gateway health check did not pass" >/dev/console
   cat /tmp/suvos-gateway-health >/dev/console 2>/dev/null || true
+  if [ "$require_gateway_health" -eq 1 ]; then
+    fatal_boot 'GATEWAY HEALTH FAILED'
+  fi
 fi
 
 if [ "${SUVOS_WITH_AEC:-0}" = "1" ] || grep -qw 'suvos.aec=1' /proc/cmdline 2>/dev/null; then
   if [ -x /system/suvos/bin/suvos-start-aec ]; then
     /system/suvos/bin/suvos-start-aec >/tmp/suvos-aec.log 2>&1 &
+    aec_ready=0
     for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
-      wget -q -O /tmp/suvos-aec-status http://suv.os/api/aec/status >/dev/null 2>&1 && \
-        grep -q '"running":true' /tmp/suvos-aec-status 2>/dev/null && break
+      if wget -q -O /tmp/suvos-aec-status http://suv.os/api/aec/status >/dev/null 2>&1 && \
+        grep -q '"running":true' /tmp/suvos-aec-status 2>/dev/null; then
+        aec_ready=1
+        echo "[init] aec status ok" >/dev/console
+        break
+      fi
       sleep 1
     done
+    if [ "$aec_ready" -ne 1 ]; then
+      echo "[init] error: aec status did not pass" >/dev/console
+      cat /tmp/suvos-aec-status >/dev/console 2>/dev/null || true
+      cat /tmp/suvos-aec.log >/dev/console 2>/dev/null || true
+      fatal_boot 'AEC START FAILED'
+    fi
   else
     echo "[init] suvos-start-aec is missing" >/dev/console
+    fatal_boot 'AEC START SCRIPT MISSING'
   fi
 fi
 

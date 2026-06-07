@@ -69,6 +69,14 @@ make test-full
 
 The full test installs Python/Node runtime packages into the initramfs and executes shell/C++/Python/Node demo apps.
 
+Run the explicit developer/root profile test when touching bootstrap auth success paths, `apk` availability, or developer-mode packaging:
+
+```sh
+make test-dev
+```
+
+This boots the GUI+AEC developer profile with `apk-tools`, verifies positive root auth, and confirms Alpine package-manager files are present in the guest.
+
 When touching UI source or frontend tooling, run:
 
 ```sh
@@ -91,6 +99,12 @@ Fast manual run without Python/Node runtime packages:
 make run-core
 ```
 
+Explicit developer/root GUI run:
+
+```sh
+make run-dev
+```
+
 Manual graphics-window run:
 
 ```sh
@@ -106,7 +120,7 @@ make test-gui-smoke
 make test-gui-resolutions
 ```
 
-`make run-gui` and `make test-gui-smoke` are intentionally heavier than the normal tests because they embed Chromium into the initramfs. Do not use them as the default verification path unless the change touches the browser shell boot flow. `make test-gui-smoke` opens a QEMU window briefly, validates serial-log startup health, and captures a QEMU screendump to reject the framebuffer loader or green crash/fallback screen as false positives. Manual validation is still needed for interaction quality.
+`make run-gui` and `make test-gui-smoke` are intentionally heavier than the normal tests because they embed Chromium into the initramfs. Do not use them as the default verification path unless the change touches the browser shell boot flow. `make test-gui-smoke` follows the default GUI+AEC startup path, validates serial-log startup health, and captures a QEMU screendump to reject the framebuffer loader or green crash/fallback screen as false positives. Manual validation is still needed for interaction quality.
 
 The GUI boot supervisor in `/init` treats browser-shell exit as recoverable: Cage/Chromium are restarted up to 3 times per 60 seconds, then SuvOS shows the green crash/fallback screen and returns to the serial console. A normal `make test-gui-smoke` run should not trigger any restart.
 

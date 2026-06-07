@@ -79,6 +79,14 @@ make test-full
 
 `make test-full` installs Python/Node runtime dependencies into the initramfs and verifies those runtime packages without temporary demo apps.
 
+Explicit developer/root profile:
+
+```sh
+make test-dev
+```
+
+`make test-dev` builds the GUI+AEC profile with `apk-tools`, checks the positive path for `suvos auth root <bootstrap-secret>`, and confirms that the root shell/AEC terminal has Alpine package-manager plumbing available. This profile does not change the normal `make run`.
+
 Fast manual serial run without Python/Node:
 
 ```sh
@@ -174,7 +182,7 @@ GUI smoke test:
 make test-gui-smoke
 ```
 
-It also builds the GUI profile and opens a QEMU window for a bounded period. The test checks the serial log for Cage/Chromium startup, the `suvos-browser` user, render profile, input/audio devices, absence of default `--no-sandbox`, early browser-shell exit, and fatal GL/GPU errors. At the end, it captures a QEMU `screendump`, checks its size against the requested startup resolution, and fails if the framebuffer is still on the boot loader or green crash/fallback screen.
+It builds the same GUI+AEC path as the normal `make run` and opens a QEMU window for a bounded period. The test checks the serial log for Cage/Chromium startup, the `suvos-browser` user, render profile, input/audio devices, absence of default `--no-sandbox`, successful `/health`, AEC tab startup, early browser-shell exit, and fatal GL/GPU errors. At the end, it captures a QEMU `screendump`, checks its size against the requested startup resolution, and fails if the framebuffer is still on the boot loader or green crash/fallback screen.
 
 The build creates an external bootstrap secret:
 
@@ -197,6 +205,14 @@ make run
 ```
 
 This starts the QEMU GUI with Chromium tabs for `http://suv.os/` and `http://suv.os/aec/`.
+
+Explicit developer/root GUI profile:
+
+```sh
+make run-dev
+```
+
+`make run-dev` keeps the normal `make run` profile lean, but adds `apk-tools`, `/etc/apk/repositories`, and `/etc/apk/keys` to the guest so Alpine packages can be installed manually from the root shell/AEC terminal. This profile does not make background package/cloud calls by itself; the network is only used if the user explicitly runs `apk`.
 
 For the old headless serial console:
 
