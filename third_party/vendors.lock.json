@@ -11,11 +11,11 @@
     "chromium": {
       "path": "third_party/chromium",
       "repo": "https://github.com/alexup71rus/SuvOS_Chromium.git",
-      "ref": null,
+      "ref": "79dde71c91f9ac034918c10a9b69409870d87191",
       "tag": null,
-      "optional": true,
-      "bootstrap": false,
-      "notes": "Reserved for the future SuvOS Chromium fork."
+      "optional": false,
+      "bootstrap": true,
+      "notes": "SuvOS Chromium vendor artifact repository."
     }
   }
 }

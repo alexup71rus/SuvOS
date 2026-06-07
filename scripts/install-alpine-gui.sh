@@ -9,7 +9,7 @@ fi
 ROOTFS="$1"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CURSOR_THEME_PACKAGE="${SUVOS_CURSOR_THEME_PACKAGE:-adwaita-icon-theme}"
-GUI_PACKAGES="${SUVOS_GUI_PACKAGES:-cage chromium xwayland dbus seatd eudev su-exec font-dejavu $CURSOR_THEME_PACKAGE gsettings-desktop-schemas xkeyboard-config mesa-dri-gallium mesa-egl mesa-gbm alsa-utils libinput-tools pciutils}"
+GUI_PACKAGES="${SUVOS_GUI_PACKAGES:-cage xwayland dbus seatd eudev su-exec font-dejavu $CURSOR_THEME_PACKAGE gsettings-desktop-schemas xkeyboard-config mesa-dri-gallium mesa-egl mesa-gbm alsa-utils libinput-tools pciutils}"
 GUI_POST_INSTALL='
 if [ -x /suvos-root/usr/bin/glib-compile-schemas ] && [ -d /suvos-root/usr/share/glib-2.0/schemas ]; then
   glib_log=/tmp/suvos-glib-compile-schemas.log

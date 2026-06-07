@@ -133,6 +133,8 @@ fi
 
 if [ "$WITH_GUI" = "1" ]; then
   SUVOS_ARCH="$ARCH" "$ROOT_DIR/scripts/install-alpine-gui.sh" "$ROOTFS"
+  SUVOS_ARCH="$ARCH" "$ROOT_DIR/scripts/build-chromium.sh"
+  SUVOS_ARCH="$ARCH" "$ROOT_DIR/scripts/install-chromium-artifact.sh" "$ROOTFS"
 fi
 
 if [ "$WITH_AEC" = "1" ]; then
