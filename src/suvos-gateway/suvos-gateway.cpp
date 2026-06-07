@@ -133,6 +133,10 @@ std::string readFile(const std::string &path) {
   return buffer.str();
 }
 
+bool pathReadable(const std::string &path) {
+  return access(path.c_str(), R_OK) == 0;
+}
+
 bool validPart(const std::string &value) {
   if (value.empty() || value.size() > 128) {
     return false;
@@ -183,6 +187,10 @@ std::string readAll(int fd, size_t maxBytes) {
     }
   }
   return response;
+}
+
+bool jsonFlagTrue(const std::string &json, const std::string &key) {
+  return json.find("\"" + key + "\":true") != std::string::npos;
 }
 
 size_t httpHeaderEnd(const std::string &request, size_t *separatorSize) {
@@ -538,6 +546,33 @@ std::string aecStatusJson() {
   return body.str();
 }
 
+std::string healthJson(bool *ok) {
+  const bool uiBundleReady =
+      pathReadable(std::string(kUiRoot) + "/index.html") &&
+      pathReadable(std::string(kUiRoot) + "/styles.css") &&
+      pathReadable(std::string(kUiRoot) + "/app.js");
+
+  const SuvosdResult status = callSuvosd({"status-json"});
+  const bool suvosdOk = status.transportOk && status.code == 0;
+  const bool apiSocketAvailable = suvosdOk && jsonFlagTrue(status.output, "apiSocketAvailable");
+  const bool systemRootReadOnly = suvosdOk && jsonFlagTrue(status.output, "systemRootReadOnly");
+
+  *ok = suvosdOk && uiBundleReady && apiSocketAvailable && systemRootReadOnly;
+
+  std::ostringstream body;
+  body << "{";
+  body << "\"ok\":" << (*ok ? "true" : "false") << ",";
+  body << "\"service\":\"suvos-gateway\",";
+  body << "\"status\":\"" << (*ok ? "ok" : "degraded") << "\",";
+  body << "\"suvosdOk\":" << (suvosdOk ? "true" : "false") << ",";
+  body << "\"suvosdExitCode\":" << status.code << ",";
+  body << "\"uiBundleReady\":" << (uiBundleReady ? "true" : "false") << ",";
+  body << "\"apiSocketAvailable\":" << (apiSocketAvailable ? "true" : "false") << ",";
+  body << "\"systemRootReadOnly\":" << (systemRootReadOnly ? "true" : "false");
+  body << "}\n";
+  return body.str();
+}
+
 bool requestWantsWebSocket(const std::string &headers) {
   std::istringstream lines(headers);
   std::string line;
@@ -765,7 +800,9 @@ void handleClient(int fd) {
   }
 
   if (path == "/health") {
-    sendJson(fd, 200, "OK", "{\"ok\":true,\"service\":\"suvos-gateway\"}\n");
+    bool ok = false;
+    const std::string body = healthJson(&ok);
+    sendJson(fd, ok ? 200 : 503, ok ? "OK" : "Service Unavailable", body);
     return;
   }
   if (path == "/api/ping") {

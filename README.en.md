@@ -18,13 +18,10 @@ SuvOS is currently a minimal x86_64 Linux-based OS prototype:
 - localhost-only HTTP gateway `suvos-gateway` on `http://suv.os/`;
 - structured JSON endpoints for status, roles, and the app registry;
 - first web UI page served through `suvos-gateway`;
-- app manifests at `/system/suvos/apps/manifest.d/*.app`;
+- empty app registry at `/system/suvos/apps/manifest.d` for future system apps;
 - read-only `/system/suvos` system area at boot;
 - writable `/data/suvos` area for future data and extensions;
-- shell-level localization for `ru` and `en`;
-- statically linked x86_64 C++ demo program;
-- Python 3 runtime;
-- Node.js runtime.
+- shell-level localization for `ru` and `en`.
 
 ## Build
 
@@ -32,7 +29,7 @@ SuvOS is currently a minimal x86_64 Linux-based OS prototype:
 make
 ```
 
-The build obtains the x86_64 kernel, minimal graphics modules, and static BusyBox from Alpine `v3.22`, installs Python/Node runtime dependencies into the initramfs rootfs, and builds the C++ demo plus `suvosd`, `suvosctl`, `suvos-splash`, and `suvos-gateway` through Docker/OrbStack.
+The build obtains the kernel, minimal graphics modules, and static BusyBox from Alpine `v3.22`, and builds `suvosd`, `suvosctl`, `suvos-splash`, and `suvos-gateway` through Docker/OrbStack. Python/Node runtime packages are installed only in the explicit full profile.
 
 Alpine assets are cached in `build/cache`, `build/kernel`, and `build/assets`. If the outputs already exist, the build does not hit the network. To force-refresh upstream assets:
 
@@ -40,13 +37,13 @@ Alpine assets are cached in `build/cache`, `build/kernel`, and `build/assets`. I
 SUVOS_REFRESH_ASSETS=1 make assets
 ```
 
-Alpine runtime/GUI rootfs layers are cached too. The first `make`, `make test-full`, or `make run-gui` creates a tar layer under `build/cache/rootfs-layers` and an APK download cache under `build/cache/apk`; later builds with the same Alpine image and package list just extract the cached layer without the long `Installing ...` package list.
+Alpine runtime/GUI/AEC rootfs layers are cached too. The first `make test-full` or GUI/AEC run creates a tar layer under `build/cache/rootfs-layers` and an APK download cache under `build/cache/apk`; later builds with the same Alpine image and package list just extract the cached layer without the long `Installing ...` package list.
 
 Layer cache controls:
 
 ```sh
-SUVOS_REFRESH_LAYER_CACHE=1 make run-gui
-SUVOS_DISABLE_LAYER_CACHE=1 make run-gui
+SUVOS_REFRESH_LAYER_CACHE=1 make run
+SUVOS_DISABLE_LAYER_CACHE=1 make run
 make clean-layer-cache
 ```
 
@@ -72,7 +69,7 @@ build/initramfs/suvos-initramfs.cpio.gz
 make test
 ```
 
-By default this is the fast core test. It builds the initramfs without Python/Node runtime packages, boots SuvOS in QEMU with `suvos.autotest=1`, runs basic commands, checks roles, verifies `/system/suvos` is read-only, runs the shell app and C++ app, and powers off.
+By default this is the fast core test. It builds the initramfs without Python/Node runtime packages, boots SuvOS in QEMU with `suvos.autotest=1`, runs basic commands, checks roles, verifies the empty app registry, verifies `/system/suvos` is read-only, and powers off.
 
 Full test:
 
@@ -80,9 +77,9 @@ Full test:
 make test-full
 ```
 
-`make test-full` installs Python/Node runtime dependencies into the initramfs and additionally verifies `suvos run py-hello` plus `suvos run node-hello`.
+`make test-full` installs Python/Node runtime dependencies into the initramfs and verifies those runtime packages without temporary demo apps.
 
-Fast manual run without Python/Node:
+Fast manual serial run without Python/Node:
 
 ```sh
 make run-core
@@ -110,34 +107,54 @@ On macOS, the current Homebrew QEMU opens the window through `-display cocoa`; `
 
 The next GUI stage is documented in [SuvOS_CONCEPT.md](SuvOS_CONCEPT.md): Wayland runtime + Cage + ordinary Chromium. For the MVP, Chromium must not run in `--kiosk` or `--app` mode, because the SuvOS shell must keep tabs, the address bar, and extensions UI. Cage is the minimal compositor for one maximized browser window without GNOME/KDE/window manager.
 
-Experimental Chromium shell run:
+Normal manual SuvOS run:
 
 ```sh
-make run-gui
+make run
+# or explicitly:
+make runos
+# current backend:
+make run-qemu
 ```
 
-`make run-gui` builds a separate GUI profile with `SUVOS_WITH_GUI=1`, installs Alpine packages for `cage`, `chromium`, `xwayland`, `dbus`, `seatd`, `eudev`, `su-exec`, fonts, a cursor theme, ALSA diagnostics, and Mesa/Wayland dependencies, then boots QEMU with `suvos.graphics=1 suvos.gui=1 suvos.render=qemu-tcg`. This is a heavy profile: Chromium is downloaded and embedded into the initramfs, so it is not used by `make test`. After the first successful build, GUI packages are restored from the rootfs layer cache until the package list or Alpine image changes. The QEMU GUI profile uses USB HID keyboard/tablet/mouse through `qemu-xhci` by default, CoreAudio + virtio-sound for sound, and starts Cage with `-d` to remove client-side window controls where possible. `eudev` is not a desktop environment dependency; it is the device discovery layer libinput/wlroots needs. Without it, the kernel can expose `/dev/input/event*` while Cage still receives no mouse devices.
+`make run` and `make runos` build the GUI profile with AEC, install Alpine packages for `cage`, `chromium`, `xwayland`, `dbus`, `seatd`, `eudev`, `su-exec`, fonts, a cursor theme, ALSA diagnostics, and Mesa/Wayland dependencies. On Apple Silicon, `make run` now defaults to the fast `aarch64` QEMU-HVF profile (`suvos.render=qemu-hvf`) with an arm64 AEC artifact. The old x86_64 QEMU/TCG runner remains available explicitly as `make run-qemu-x86`. This is a heavy profile: Chromium and AEC are embedded into the initramfs, so it is not used by `make test`. After the first successful build, GUI packages are restored from the rootfs layer cache until the package list or Alpine image changes. The QEMU GUI profile uses USB HID keyboard/tablet/mouse through `qemu-xhci` by default, CoreAudio + virtio-sound for sound, and starts Cage with `-d` to remove client-side window controls where possible. `eudev` is not a desktop environment dependency; it is the device discovery layer libinput/wlroots needs. Without it, the kernel can expose `/dev/input/event*` while Cage still receives no mouse devices.
+
+Admin Explorer Code is part of the normal manual run:
+
+```sh
+make run
+```
+
+`make run` starts root-capable Admin Explorer Code inside the guest VM on `127.0.0.1:3030` and opens Chromium with `http://suv.os/` and `http://suv.os/aec/` tabs. The AEC artifact is prepared in the external sibling repo `../admin-explorer-code` as a Code - OSS source fork without marketplace/cloud/telemetry defaults; override it with `SUVOS_AEC_REPO` or `SUVOS_AEC_DIST`. This profile adds a small glibc payload for the AEC server. `make run-gui` and `make run-gui-aec` are kept as compatibility aliases for older manual commands.
+
+An alternative Parallels runner is reserved as a separate command:
+
+```sh
+make run-parallels
+```
+
+On Apple Silicon this target intentionally stops with diagnostics: the fast `aarch64` kernel/initramfs/AEC artifact now exists, but Parallels CLI does not provide a direct QEMU-style `-kernel/-initrd` boot path for the current initramfs-only prototype. The next Parallels/GPU step is a bootable arm64 disk/ISO image and a separate 3D acceleration/WebGL check. For current manual work, use `make run` through QEMU-HVF.
 
 The cursor theme is currently a replaceable GUI dependency, not part of SuvOS core logic. The default is Alpine's `adwaita-icon-theme`; it can be replaced like this:
 
 ```sh
-SUVOS_CURSOR_THEME_PACKAGE=breeze-icons make run-gui
+SUVOS_CURSOR_THEME_PACKAGE=breeze-icons make run
 ```
 
 Chromium still runs as a Wayland client through `--ozone-platform=wayland`. `xwayland` is present only because the current Alpine Cage 0.2.0 package tries to start an XWayland server during boot; this does not mean SuvOS is switching to X11. Cage/Chromium run as the `suvos-browser` system user, not as root, with browser state under `/data/suvos/chromium`. `--no-sandbox` is forbidden in the default GUI boot; it can only be enabled through the explicit dev escape `suvos.allow_no_sandbox=1` or `SUVOS_CHROMIUM_ALLOW_NO_SANDBOX=1`.
 
-Closing Chromium through the browser `X` is not treated as a safe shutdown flow yet. The settings UI installs a web-level `beforeunload` warning, but Chromium does not guarantee that this warning is shown when closing browser chrome. The default behavior is now recovery-first: if the browser shell exits or crashes, `/init` restarts Cage/Chromium up to 3 times per 60 seconds. If the limit is exhausted, SuvOS shows the green crash/fallback screen and returns to the serial console. Turning the browser `X` into a real system power button with a mandatory warning requires a Chromium patchset or privileged internal page.
+The current `http://suv.os/` tab remains a temporary control-plane diagnostics page, not the final settings surface. Closing Chromium through the browser `X` is not treated as a safe shutdown flow yet. The settings UI installs a web-level `beforeunload` warning, but Chromium does not guarantee that this warning is shown when closing browser chrome. The default behavior is now recovery-first: if the browser shell exits or crashes, `/init` restarts Cage/Chromium up to 3 times per 60 seconds. If the limit is exhausted, SuvOS shows the green crash/fallback screen and returns to the serial console. Final OS-facing settings, system chrome, and shutdown/power UX belong in the future Chromium fork or a privileged internal page, not as more logic inside the current TypeScript page.
 
-The render profile is selected through `suvos.render=<profile>`. If the parameter is omitted, SuvOS uses `hardware` so the real OS does not become permanently software-only. The Mac M QEMU Cocoa/TCG dev run uses `suvos.render=qemu-tcg`: Chromium uses ANGLE `gl-egl` on Mesa llvmpipe in this profile, while Vulkan/VAAPI are disabled. Fatal `GLDisplayEGL`/GPU-process errors in this profile are treated as bugs and fail the GUI smoke test.
+The render profile is selected through `suvos.render=<profile>`. If the parameter is omitted, SuvOS uses `hardware` so the real OS does not become permanently software-only. The Mac M QEMU Cocoa/TCG dev run uses `suvos.render=qemu-tcg`, while the arm64/HVF run uses `suvos.render=qemu-hvf`: Chromium uses ANGLE `gl-egl` on Mesa llvmpipe in these profiles, while Vulkan/VAAPI are disabled. This is a fast and stable VM dev path, but not real host GPU/WebGL. The current status and the next Parallels/3D acceleration track are documented in `docs/gpu-webgl-roadmap.md`.
 
-On macOS, `make run-gui` automatically selects a startup resolution at roughly 90% of the main display's logical size. On the current MacBook Pro this yields about `1552x1000` instead of the old `1280x800`. The auto-size is capped by `SUVOS_GUI_MAX_WIDTH=1880` and `SUVOS_GUI_MAX_HEIGHT=1120` so an external 4K/5K monitor does not create an excessively heavy QEMU framebuffer.
+On macOS, `make run` automatically selects a startup resolution at roughly 90% of the main display's logical size. On the current MacBook Pro this yields about `1552x1000` instead of the old `1280x800`. The auto-size is capped by `SUVOS_GUI_MAX_WIDTH=1880` and `SUVOS_GUI_MAX_HEIGHT=1120` so an external 4K/5K monitor does not create an excessively heavy QEMU framebuffer.
 
 The GUI profile startup resolution can be changed without editing scripts:
 
 ```sh
-SUVOS_GUI_SCALE_PERCENT=95 make run-gui
-make run-gui SUVOS_GUI_WIDTH=1440 SUVOS_GUI_HEIGHT=900
-SUVOS_GUI_MAX_WIDTH=0 SUVOS_GUI_MAX_HEIGHT=0 make run-gui
+SUVOS_GUI_SCALE_PERCENT=95 make run
+make run SUVOS_GUI_WIDTH=1440 SUVOS_GUI_HEIGHT=900
+SUVOS_GUI_MAX_WIDTH=0 SUVOS_GUI_MAX_HEIGHT=0 make run
 make test-gui-smoke SUVOS_GUI_WIDTH=1024 SUVOS_GUI_HEIGHT=768
 make test-gui-resolutions
 ```
@@ -147,8 +164,8 @@ This sets the QEMU video device `virtio-vga,xres=...,yres=...,edid=on` and the k
 Input/audio devices can also be overridden:
 
 ```sh
-make run-gui SUVOS_GUI_INPUT_DEVICES="-device virtio-keyboard-pci -device virtio-tablet-pci"
-make run-gui SUVOS_GUI_AUDIO_DEVICES="-audiodev coreaudio,id=suvos-audio,out.mixing-engine=on -device virtio-sound-pci,audiodev=suvos-audio,streams=1"
+make run SUVOS_GUI_INPUT_DEVICES="-device virtio-keyboard-pci -device virtio-tablet-pci"
+make run SUVOS_GUI_AUDIO_DEVICES="-audiodev coreaudio,id=suvos-audio,out.mixing-engine=on -device virtio-sound-pci,audiodev=suvos-audio,streams=1"
 ```
 
 GUI smoke test:
@@ -179,10 +196,12 @@ This file is not included in the initramfs and is ignored by git. The image only
 make run
 ```
 
-To run with a window instead of the headless serial console:
+This starts the QEMU GUI with Chromium tabs for `http://suv.os/` and `http://suv.os/aec/`.
+
+For the old headless serial console:
 
 ```sh
-make run-graphics
+make run-console
 ```
 
 Inside the console:
@@ -196,19 +215,13 @@ suvos whoami
 suvos auth status
 suvos auth root <bootstrap-secret>
 suvos list
-suvos run hello
-suvos run cpp-hello
 suvosctl ping
 suvosctl status
 suvosctl list
-suvosctl run hello
 wget -q -O - http://suv.os/api/status
 wget -q -O - http://suv.os/api/roles
 wget -q -O - http://suv.os/api/apps
-wget -q -O - 'http://suv.os/api/run?name=hello'
 wget -q -O - http://suv.os/
-suvos run py-hello
-suvos run node-hello
 python3 --version
 node --version
 poweroff
@@ -240,7 +253,7 @@ This first filesystem is initramfs-only. Files created outside the read-only sys
 
 `suvosctl` is a diagnostic client for the internal Unix socket API. The main interactive CLI remains `suvos`; the future HTTP gateway should call `/run/suvosd/control.sock` the same way `suvosctl` does.
 
-`suvos-gateway` is the first HTTP boundary for the future web UI. It listens on loopback-only `127.0.0.1:80`, while guest `/etc/hosts` maps `suv.os` to `127.0.0.1`. The gateway serves the built UI dist from `/system/suvos/ui`, returns JSON, and proxies commands into `suvosd` through the Unix socket. `/api/status`, `/api/roles`, and `/api/apps` return structured JSON objects for the UI; `/api/run?name=<app>` remains a command endpoint and returns `exitCode` plus `output`. Current endpoints: `http://suv.os/`, `/ui/app.js`, `/ui/styles.css`, `/health`, `/api/status`, `/api/roles`, `/api/apps`, `/api/run?name=<app>`. The next security step is a browser UI session token before adding state-changing browser actions.
+`suvos-gateway` is the first HTTP boundary for the future web UI. It listens on loopback-only `127.0.0.1:80`, while guest `/etc/hosts` maps `suv.os` to `127.0.0.1`. The gateway serves the built UI dist from `/system/suvos/ui`, returns JSON, and proxies commands into `suvosd` through the Unix socket. `/api/status`, `/api/roles`, and `/api/apps` return structured JSON objects for the UI; `/api/run?name=<app>` remains a command endpoint for future allowlisted manifests. `/health` now represents baseline control-plane readiness: `suvosd` reachability, the loopback API socket, read-only system root, and the presence of the UI bundle, not just the fact that the gateway process started. Current endpoints: `http://suv.os/`, `/ui/app.js`, `/ui/styles.css`, `/health`, `/api/status`, `/api/roles`, `/api/apps`, `/api/run?name=<app>`. The next security step is a browser UI session token before adding state-changing browser actions.
 
 SuvOS-owned files live under:
 
@@ -266,30 +279,30 @@ SuvOS-owned files live under:
 
 ## App Manifests
 
-Applications are described with manifest files:
+Applications are described with manifest files. The current system image keeps the registry directory empty, without temporary demo apps:
 
 ```text
-/system/suvos/apps/manifest.d/hello.app
+/system/suvos/apps/manifest.d/<name>.app
 ```
 
 The format is currently simple `key=value`:
 
 ```text
-name=hello
+name=example
 version=0.1.0
 runtime=shell
-path=/system/suvos/apps/hello.sh
-capability=app.hello
+path=/system/suvos/apps/example.sh
+capability=app.example
 ui_entry=
-description.en=allowlisted shell demo
-description.ru=демо shell-приложение из manifest
+description.en=allowlisted system app
+description.ru=разрешенное системное приложение
 ```
 
 `suvosd` only runs applications from the manifest registry, checks capabilities, and canonicalizes executable paths. TSV registry is no longer the primary format; the C++ daemon only keeps a legacy fallback.
 
 ## Roles and Bootstrap Secret
 
-The current boot starts SuvOS in the `setup` runtime role. This role can read status, list app manifests, run demo applications, and attempt `auth root`. The full `root` runtime role is unlocked with:
+The current boot starts SuvOS in the `setup` runtime role. This role can read status, list app manifests, and attempt `auth root`. The full `root` runtime role is unlocked with:
 
 ```sh
 suvos auth root <bootstrap-secret>
@@ -318,6 +331,6 @@ The current boot image defaults to Russian. Runtime apps and system messages are
 
 ## Alpine Boundary
 
-SuvOS currently uses Alpine `v3.22` as an upstream package source for the kernel, BusyBox, Python, Node.js, musl, and runtime libraries. The project-owned layer is `/init`, `/system/suvos`, `/data/suvos`, `suvosd`, app manifests, localization, and the future UI/service model.
+SuvOS currently uses Alpine `v3.22` as an upstream package source for the kernel, BusyBox, musl, and runtime libraries. Python/Node are pulled only by the explicit full profile. The project-owned layer is `/init`, `/system/suvos`, `/data/suvos`, `suvosd`, app manifests, localization, and the future UI/service model.
 
 This dependency is acceptable for the prototype. Later stages can replace it with Buildroot or another controlled build pipeline.

@@ -522,7 +522,7 @@ bool constantTimeEquals(const std::string &left, const std::string &right) {
 
 RolePolicy loadRolePolicy() {
   RolePolicy policy;
-  policy.roles.push_back({"setup", {"status.read", "role.read", "apps.list", "auth.status", "auth.root", "app.hello", "app.cpp-hello", "app.py-hello", "app.node-hello"}});
+  policy.roles.push_back({"setup", {"status.read", "role.read", "apps.list", "auth.status", "auth.root"}});
   policy.roles.push_back({"root", {"*"}});
 
   std::ifstream file(kRolesPath);
@@ -619,12 +619,24 @@ bool hasSuffix(const std::string &value, const std::string &suffix) {
          value.compare(value.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 
-std::string currentRole(const RolePolicy &policy) {
+std::string sessionRole(const RolePolicy &policy) {
   std::string role = trim(readFile(kSessionRoleFile));
   if (validName(role)) {
     return role;
   }
   return policy.defaultRole;
+}
+
+bool rootSessionMarkerValid(const RolePolicy &policy) {
+  return trim(readFile(kSessionAuthFile)) == policy.rootRole;
+}
+
+std::string currentRole(const RolePolicy &policy) {
+  const std::string role = sessionRole(policy);
+  if (role == policy.rootRole && !rootSessionMarkerValid(policy)) {
+    return policy.defaultRole;
+  }
+  return role;
 }
 
 std::string currentPermissions(const RolePolicy &policy) {
@@ -656,12 +668,21 @@ bool rootHashConfigured(const RolePolicy &policy) {
 }
 
 bool rootSessionUnlocked(const RolePolicy &policy) {
-  return currentRole(policy) == policy.rootRole && trim(readFile(kSessionAuthFile)) == policy.rootRole;
+  return currentRole(policy) == policy.rootRole;
 }
 
 bool unlockRootSession(const RolePolicy &policy) {
-  return writeFile(kSessionRoleFile, policy.rootRole + "\n", 0600) &&
-         writeFile(kSessionAuthFile, policy.rootRole + "\n", 0600);
+  if (!writeFile(kSessionAuthFile, policy.rootRole + "\n", 0600)) {
+    return false;
+  }
+
+  if (writeFile(kSessionRoleFile, policy.rootRole + "\n", 0600)) {
+    return true;
+  }
+
+  unlink(kSessionAuthFile);
+  (void)writeFile(kSessionRoleFile, policy.defaultRole + "\n", 0600);
+  return false;
 }
 
 std::vector<std::string> listManifestFiles() {

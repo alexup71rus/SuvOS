@@ -9,6 +9,10 @@ if [ -r /system/suvos/config/locale.conf ]; then
   export SUVOS_LANG="${SUVOS_LANG:-ru}"
 fi
 
+if [ -r /system/suvos/config/build.conf ]; then
+  . /system/suvos/config/build.conf
+fi
+
 mkdir -p /dev /proc /sys /tmp /run /root /data
 chmod 1777 /tmp 2>/dev/null || true
 
@@ -30,14 +34,16 @@ prepare_data_root() {
   mkdir -p /data/suvos
   mkdir -p /data/suvos/apps
   mkdir -p /data/suvos/extensions
+  mkdir -p /data/suvos/extensions/aec
+  mkdir -p /data/suvos/aec
   mkdir -p /data/suvos/chromium
   mkdir -p /data/suvos/downloads
   mkdir -p /data/suvos/state
   mkdir -p /data/suvos/logs
   mkdir -p /data/suvos/tmp
 
-  chmod 0755 /data /data/suvos /data/suvos/apps /data/suvos/extensions /data/suvos/downloads /data/suvos/logs
-  chmod 0700 /data/suvos/chromium /data/suvos/state /data/suvos/tmp
+  chmod 0755 /data /data/suvos /data/suvos/apps /data/suvos/extensions /data/suvos/extensions/aec /data/suvos/downloads /data/suvos/logs
+  chmod 0700 /data/suvos/aec /data/suvos/chromium /data/suvos/state /data/suvos/tmp
 }
 
 make_system_readonly() {
@@ -78,10 +84,33 @@ done
 ifconfig lo 127.0.0.1 up 2>/tmp/suvos-lo.err || true
 /system/suvos/bin/suvos-gateway &
 
+gateway_ready=0
 for _ in 1 2 3 4 5; do
-  wget -q -O /tmp/suvos-gateway-health http://suv.os/health >/dev/null 2>&1 && break
+  if wget -q -O /tmp/suvos-gateway-health http://suv.os/health >/dev/null 2>&1; then
+    gateway_ready=1
+    echo "[init] gateway health ok" >/dev/console
+    break
+  fi
   sleep 1
 done
+
+if [ "$gateway_ready" -ne 1 ]; then
+  echo "[init] warning: gateway health check did not pass" >/dev/console
+  cat /tmp/suvos-gateway-health >/dev/console 2>/dev/null || true
+fi
+
+if [ "${SUVOS_WITH_AEC:-0}" = "1" ] || grep -qw 'suvos.aec=1' /proc/cmdline 2>/dev/null; then
+  if [ -x /system/suvos/bin/suvos-start-aec ]; then
+    /system/suvos/bin/suvos-start-aec >/tmp/suvos-aec.log 2>&1 &
+    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+      wget -q -O /tmp/suvos-aec-status http://suv.os/api/aec/status >/dev/null 2>&1 && \
+        grep -q '"running":true' /tmp/suvos-aec-status 2>/dev/null && break
+      sleep 1
+    done
+  else
+    echo "[init] suvos-start-aec is missing" >/dev/console
+  fi
+fi
 
 if grep -qw 'suvos.autotest=1' /proc/cmdline 2>/dev/null; then
   /system/suvos/bin/suvos-autotest

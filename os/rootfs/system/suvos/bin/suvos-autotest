@@ -17,7 +17,8 @@ suvos roles
 suvos whoami
 suvos auth status
 test -r /system/suvos/modules/graphics.order
-test -r /system/suvos/modules/graphics/kernel/drivers/gpu/drm/tiny/bochs.ko
+test -r /system/suvos/modules/graphics/kernel/drivers/gpu/drm/tiny/bochs.ko || \
+  test -r /system/suvos/modules/graphics/kernel/drivers/gpu/drm/virtio/virtio-gpu.ko
 suvos-splash --check
 test -s /system/suvos/security/root-bootstrap.sha256
 test -d /system/suvos/apps/manifest.d
@@ -25,10 +26,15 @@ test -S /run/suvosd/control.sock
 suvosctl ping
 suvosctl whoami
 suvosctl list
-suvosctl run hello
 wget -q -O /tmp/suvos-http-health.out http://suv.os/health
 cat /tmp/suvos-http-health.out
 grep -q '"ok":true' /tmp/suvos-http-health.out
+grep -q '"status":"ok"' /tmp/suvos-http-health.out
+grep -q '"service":"suvos-gateway"' /tmp/suvos-http-health.out
+grep -q '"suvosdOk":true' /tmp/suvos-http-health.out
+grep -q '"uiBundleReady":true' /tmp/suvos-http-health.out
+grep -q '"apiSocketAvailable":true' /tmp/suvos-http-health.out
+grep -q '"systemRootReadOnly":true' /tmp/suvos-http-health.out
 wget -q -O /tmp/suvos-ui-index.out http://suv.os/
 grep -q '<title>SuvOS Settings</title>' /tmp/suvos-ui-index.out
 wget -q -O /tmp/suvos-ui-js.out http://suv.os/ui/app.js
@@ -48,14 +54,19 @@ wget -q -O /tmp/suvos-http-roles.out http://suv.os/api/roles
 cat /tmp/suvos-http-roles.out
 grep -q '"currentRole":"setup"' /tmp/suvos-http-roles.out
 grep -q '"permissions":' /tmp/suvos-http-roles.out
+printf 'root\n' >/run/suvosd/session.role
+rm -f /run/suvosd/session.auth
+test "$(suvos whoami | tr -d '\r\n')" = "setup"
+wget -q -O /tmp/suvos-http-roles-tampered.out http://suv.os/api/roles
+cat /tmp/suvos-http-roles-tampered.out
+grep -q '"currentRole":"setup"' /tmp/suvos-http-roles-tampered.out
+grep -q '"rootSessionUnlocked":false' /tmp/suvos-http-roles-tampered.out
+printf 'setup\n' >/run/suvosd/session.role
+rm -f /run/suvosd/session.auth
 wget -q -O /tmp/suvos-http-apps.out http://suv.os/api/apps
 cat /tmp/suvos-http-apps.out
 grep -q '"apps":' /tmp/suvos-http-apps.out
-grep -q '"name":"hello"' /tmp/suvos-http-apps.out
-wget -q -O /tmp/suvos-http-run.out 'http://suv.os/api/run?name=hello'
-cat /tmp/suvos-http-run.out
-grep -q '"exitCode":0' /tmp/suvos-http-run.out
-grep -q 'shell' /tmp/suvos-http-run.out
+grep -q '"apps":\[\]' /tmp/suvos-http-apps.out
 if suvos auth root wrong-bootstrap-secret >/tmp/suvos-auth-test.out 2>&1; then
   echo "invalid root bootstrap secret was accepted"
   exit 1
@@ -76,20 +87,118 @@ cd /tmp/suvos-test
 echo "created-by-autotest" > sample.txt
 ls -la
 cat sample.txt
-suvos run hello
-suvos run cpp-hello
 if [ "$SUVOS_WITH_RUNTIMES" = "1" ]; then
   python3 --version
   node --version
-  suvos run py-hello
-  suvos run node-hello
 else
-  if suvos run py-hello >/tmp/suvos-runtime-disabled.out 2>&1; then
-    echo "runtime app was available in core profile"
+  echo "RUNTIME_TESTS_SKIPPED"
+fi
+if [ "${SUVOS_WITH_AEC:-0}" = "1" ]; then
+  test -x /system/suvos/aec/bin/admin-explorer-code-server
+  test -d /data/suvos/aec
+  mkdir -p /tmp/suvos-aec-smoke
+  echo "aec-visible-text" >/tmp/suvos-aec-smoke/sample.txt
+  printf 'P3\n1 1\n255\n0 255 0\n' >/tmp/suvos-aec-smoke/sample.ppm
+  wget -q -O /tmp/suvos-http-aec-status.out http://suv.os/api/aec/status
+  cat /tmp/suvos-http-aec-status.out
+  grep -q '"enabled":true' /tmp/suvos-http-aec-status.out
+  grep -q '"running":true' /tmp/suvos-http-aec-status.out
+  grep -q '"url":"/aec/"' /tmp/suvos-http-aec-status.out
+  wget -q -O /tmp/suvos-http-aec-index.out http://suv.os/aec/
+  grep -Eiq 'workbench|admin explorer code' /tmp/suvos-http-aec-index.out
+  if grep -Eq '"extensionsGallery"[[:space:]]*:' /system/suvos/aec/product.json; then
+    echo "AEC product metadata still exposes an extension gallery"
     exit 1
   fi
-  cat /tmp/suvos-runtime-disabled.out
-  echo "RUNTIME_TESTS_SKIPPED"
+  if grep -Eiq 'defaultChatAgent|copilot|marketplace\.visualstudio|vscode-cdn\.net|vscode-sync|trafficmanager|login\.microsoft|api\.github\.com/copilot|aka\.ms/github-copilot' /system/suvos/aec/product.json; then
+    echo "AEC product metadata still contains active cloud/chat references"
+    exit 1
+  fi
+  for removed_extension in \
+    /system/suvos/aec/extensions/configuration-editing \
+    /system/suvos/aec/extensions/css-language-features \
+    /system/suvos/aec/extensions/debug-auto-launch \
+    /system/suvos/aec/extensions/debug-server-ready \
+    /system/suvos/aec/extensions/emmet \
+    /system/suvos/aec/extensions/extension-editing \
+    /system/suvos/aec/extensions/git \
+    /system/suvos/aec/extensions/git-base \
+    /system/suvos/aec/extensions/github \
+    /system/suvos/aec/extensions/github-authentication \
+    /system/suvos/aec/extensions/grunt \
+    /system/suvos/aec/extensions/gulp \
+    /system/suvos/aec/extensions/html-language-features \
+    /system/suvos/aec/extensions/ipynb \
+    /system/suvos/aec/extensions/jake \
+    /system/suvos/aec/extensions/json-language-features \
+    /system/suvos/aec/extensions/merge-conflict \
+    /system/suvos/aec/extensions/mermaid-chat-features \
+    /system/suvos/aec/extensions/microsoft-authentication \
+    /system/suvos/aec/extensions/ms-vscode.js-debug \
+    /system/suvos/aec/extensions/ms-vscode.js-debug-companion \
+    /system/suvos/aec/extensions/ms-vscode.vscode-js-profile-table \
+    /system/suvos/aec/extensions/node_modules \
+    /system/suvos/aec/extensions/notebook-renderers \
+    /system/suvos/aec/extensions/npm \
+    /system/suvos/aec/extensions/php-language-features \
+    /system/suvos/aec/extensions/prompt-basics \
+    /system/suvos/aec/extensions/references-view \
+    /system/suvos/aec/extensions/simple-browser \
+    /system/suvos/aec/extensions/terminal-suggest \
+    /system/suvos/aec/extensions/typescript-language-features \
+    /system/suvos/aec/extensions/tunnel-forwarding; do
+    if [ -e "$removed_extension" ]; then
+      echo "AEC cloud/auth extension is still present: $removed_extension"
+      exit 1
+    fi
+  done
+  for required_extension in \
+    /system/suvos/aec/extensions/cpp \
+    /system/suvos/aec/extensions/css \
+    /system/suvos/aec/extensions/docker \
+    /system/suvos/aec/extensions/dotenv \
+    /system/suvos/aec/extensions/html \
+    /system/suvos/aec/extensions/javascript \
+    /system/suvos/aec/extensions/less \
+    /system/suvos/aec/extensions/make \
+    /system/suvos/aec/extensions/markdown-language-features \
+    /system/suvos/aec/extensions/python \
+    /system/suvos/aec/extensions/scss \
+    /system/suvos/aec/extensions/theme-seti \
+    /system/suvos/aec/extensions/typescript-basics; do
+    if [ ! -d "$required_extension" ]; then
+      echo "AEC syntax/icon extension is missing: $required_extension"
+      exit 1
+    fi
+  done
+  css_path="$(sed -n 's#.*href="\(/aec/[^"]*/static/out/vs/code/browser/workbench/workbench.css[^"]*\)".*#\1#p' /tmp/suvos-http-aec-index.out | sed -n '1p')"
+  if [ -z "$css_path" ]; then
+    echo "AEC workbench css path was not found in index"
+    exit 1
+  fi
+  css_base="${css_path%%\?*}"
+  wget -q -O /tmp/suvos-http-aec-workbench.css "http://suv.os${css_path}"
+  grep -q 'data:font/ttf;base64' /tmp/suvos-http-aec-workbench.css
+  media_prefix="${css_base%/vs/code/browser/workbench/workbench.css}/media"
+  wget -q -O /tmp/suvos-http-aec-codicon.ttf "http://suv.os${media_prefix}/codicon.ttf"
+  test -s /tmp/suvos-http-aec-codicon.ttf
+  case " $(cat /proc/cmdline 2>/dev/null || true) " in
+    *" suvos.aec_terminal_gpu=auto "*) aec_terminal_gpu=auto ;;
+    *" suvos.aec_terminal_gpu=on "*) aec_terminal_gpu=on ;;
+    *) aec_terminal_gpu=off ;;
+  esac
+  grep -q "\"terminal.integrated.gpuAcceleration\"[[:space:]]*:[[:space:]]*\"$aec_terminal_gpu\"" /data/suvos/aec/user-data/Machine/settings.json
+  grep -q "\"terminal.integrated.gpuAcceleration\"[[:space:]]*:[[:space:]]*\"$aec_terminal_gpu\"" /data/suvos/aec/user-data/User/settings.json
+  grep -q '"workbench.iconTheme"[[:space:]]*:[[:space:]]*"vs-seti"' /data/suvos/aec/user-data/Machine/settings.json
+  grep -q '"workbench.iconTheme"[[:space:]]*:[[:space:]]*"vs-seti"' /data/suvos/aec/user-data/User/settings.json
+  case "${SUVOS_ARCH:-x86_64}" in
+    aarch64) glibc_loader=/lib/ld-linux-aarch64.so.1 ;;
+    *) glibc_loader=/lib64/ld-linux-x86-64.so.2 ;;
+  esac
+  "$glibc_loader" --list /system/suvos/aec/node_modules/node-pty/build/Release/pty.node >/tmp/suvos-aec-pty.out
+  cat /tmp/suvos-aec-pty.out
+  grep -q 'libc.so.6' /tmp/suvos-aec-pty.out
+  echo "AEC_SMOKE_PASS"
 fi
 if suvos run ../init >/tmp/suvos-invalid-run.out 2>&1; then
   echo "invalid app name was not blocked"
