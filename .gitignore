@@ -3,6 +3,7 @@
 # Generated build output and downloaded packages.
 /build/
 /node_modules/
+/node_modules.hidden-during-chromium-build/
 
 # Local VM/disk artifacts.
 *.qcow2

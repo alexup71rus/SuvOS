@@ -25,12 +25,16 @@ make run
 `make bootstrap-vendors` подтягивает закрепленные vendor-репозитории из
 `third_party/vendors.lock.json`:
 
-- `SuvOS_AEC` -> `third_party/aec`;
+- `SuvOS_AEC` -> `third_party/SuvOS_AEC`;
 - `SuvOS_Chromium` -> `third_party/chromium`.
 
 `make run` собирает GUI+AEC initramfs и запускает SuvOS в QEMU. В Chromium
 открываются две вкладки: `http://suv.os/` для текущей системной web UI и
 `http://suv.os/aec/` для AEC.
+
+Правила работы с Chromium fork и локальный Docker gateway описаны в
+[docs/chromium-workflow.md](docs/chromium-workflow.md). Основной цикл Chromium
+идет на текущем ПК; SuvOS VM используется после host-level проверки.
 
 ## Требования
 

@@ -1,7 +1,7 @@
 {
   "vendors": {
     "aec": {
-      "path": "third_party/aec",
+      "path": "third_party/SuvOS_AEC",
       "repo": "https://github.com/alexup71rus/SuvOS_AEC.git",
       "ref": "8819a21b1e7252df96dddefc12f7b87c1a41cd31",
       "tag": null,
@@ -11,11 +11,16 @@
     "chromium": {
       "path": "third_party/chromium",
       "repo": "https://github.com/alexup71rus/SuvOS_Chromium.git",
-      "ref": "79dde71c91f9ac034918c10a9b69409870d87191",
+      "ref": "38088b555207cb0c2ad6d479cd0395041925d59a",
       "tag": null,
       "optional": false,
       "bootstrap": true,
-      "notes": "SuvOS Chromium vendor artifact repository."
+      "partial_clone": true,
+      "shallow_clone": true,
+      "sparse_checkout": "suvos",
+      "branch": "main",
+      "fetch_tags": false,
+      "notes": "SuvOS Chromium source fork. Bootstrap uses a shallow sparse checkout for the current artifact entrypoint."
     }
   }
 }

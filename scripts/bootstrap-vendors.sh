@@ -63,6 +63,7 @@ sync_vendor() {
   local optional="$5"
   local bootstrap="$6"
   local checkout="$ROOT_DIR/$rel_path"
+  local partial_clone shallow_clone sparse_checkout branch fetch_tags
 
   if [ "$bootstrap" != "true" ]; then
     echo "skip $name: bootstrap is disabled in $LOCKFILE"
@@ -75,6 +76,12 @@ sync_vendor() {
   fi
 
   mkdir -p "$(dirname "$checkout")"
+
+  partial_clone="$(python3 "$ROOT_DIR/scripts/vendor-lock.py" --lockfile "$LOCKFILE" get "$name" partial_clone 2>/dev/null || true)"
+  shallow_clone="$(python3 "$ROOT_DIR/scripts/vendor-lock.py" --lockfile "$LOCKFILE" get "$name" shallow_clone 2>/dev/null || true)"
+  sparse_checkout="$(python3 "$ROOT_DIR/scripts/vendor-lock.py" --lockfile "$LOCKFILE" get "$name" sparse_checkout 2>/dev/null || true)"
+  branch="$(python3 "$ROOT_DIR/scripts/vendor-lock.py" --lockfile "$LOCKFILE" get "$name" branch 2>/dev/null || true)"
+  fetch_tags="$(python3 "$ROOT_DIR/scripts/vendor-lock.py" --lockfile "$LOCKFILE" get "$name" fetch_tags 2>/dev/null || true)"
 
   if [ -d "$checkout/.git" ]; then
     if [ -n "$(git -C "$checkout" status --short)" ]; then
@@ -94,14 +101,50 @@ sync_vendor() {
       git -C "$checkout" remote add origin "$repo"
     fi
 
-    git -C "$checkout" fetch --tags origin
+    fetch_args=()
+    if [ "$partial_clone" = "true" ]; then
+      git -C "$checkout" config remote.origin.promisor true
+      git -C "$checkout" config remote.origin.partialclonefilter blob:none
+      fetch_args+=(--filter=blob:none)
+    fi
+    if [ "$fetch_tags" = "false" ]; then
+      fetch_args+=(--no-tags)
+    else
+      fetch_args+=(--tags)
+    fi
+    if [ "$shallow_clone" = "true" ]; then
+      fetch_args+=(--depth=1)
+    fi
+    if [ -n "$branch" ]; then
+      git -C "$checkout" fetch "${fetch_args[@]}" origin "$branch"
+    else
+      git -C "$checkout" fetch "${fetch_args[@]}" origin
+    fi
   else
     if [ -e "$checkout" ]; then
       echo "vendor path exists but is not a git checkout: $checkout" >&2
       return 1
     fi
-    git clone "$repo" "$checkout"
-    git -C "$checkout" fetch --tags origin
+    clone_args=()
+    if [ "$partial_clone" = "true" ]; then
+      clone_args+=(--filter=blob:none --no-checkout)
+    fi
+    if [ "$shallow_clone" = "true" ]; then
+      clone_args+=(--depth=1)
+    fi
+    if [ "$fetch_tags" = "false" ]; then
+      clone_args+=(--no-tags)
+    fi
+    if [ -n "$branch" ]; then
+      clone_args+=(--branch "$branch")
+    fi
+    git clone "${clone_args[@]}" "$repo" "$checkout"
+  fi
+
+  if [ -n "$sparse_checkout" ]; then
+    git -C "$checkout" sparse-checkout init --cone
+    # Intentional shell splitting: lockfile stores a space-separated path list.
+    git -C "$checkout" sparse-checkout set $sparse_checkout
   fi
 
   git -C "$checkout" checkout --detach "$ref"

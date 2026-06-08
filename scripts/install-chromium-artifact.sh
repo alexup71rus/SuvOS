@@ -26,7 +26,8 @@ else
     if [ -n "$LOCKED_CHROMIUM_PATH" ] && [ -d "$ROOT_DIR/$LOCKED_CHROMIUM_PATH" ]; then
       CHROMIUM_REPO="$ROOT_DIR/$LOCKED_CHROMIUM_PATH"
     else
-      CHROMIUM_REPO="$ROOT_DIR/../SuvOS_Chromium"
+      echo "Chromium checkout not found. Run: $ROOT_DIR/scripts/bootstrap-vendors.sh chromium" >&2
+      exit 1
     fi
   fi
 

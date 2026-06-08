@@ -28,7 +28,7 @@ This keeps Cage/Chromium stable under QEMU-HVF.
 - `SUVOS_ARCH=aarch64 SUVOS_WITH_RUNTIMES=0 scripts/build-initramfs.sh`
 - `SUVOS_ARCH=aarch64 SUVOS_TEST_PROFILE=core scripts/test-boot.sh`
 - arm64 AEC artifact from the pinned `SuvOS_AEC` checkout under
-  `third_party/aec`.
+  `third_party/SuvOS_AEC`.
 - `make initramfs-aec-arm64`
 - `SUVOS_ARCH=aarch64 SUVOS_TEST_PROFILE=aec ... scripts/test-boot.sh`
 - `SUVOS_ARCH=aarch64 ... scripts/test-gui-smoke.sh`

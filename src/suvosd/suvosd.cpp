@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <dirent.h>
 #include <fcntl.h>
 #include <fstream>
@@ -16,6 +17,7 @@
 #include <string>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/reboot.h>
 #include <sys/types.h>
 #include <sys/un.h>
 #include <sys/wait.h>
@@ -891,6 +893,29 @@ std::string statusJson() {
   return out.str();
 }
 
+std::string timeJson() {
+  std::time_t now = std::time(nullptr);
+  std::tm localTm {};
+  localtime_r(&now, &localTm);
+
+  char isoBuf[32] = {0};
+  std::strftime(isoBuf, sizeof(isoBuf), "%Y-%m-%dT%H:%M:%S", &localTm);
+  char hhmmBuf[8] = {0};
+  std::strftime(hhmmBuf, sizeof(hhmmBuf), "%H:%M", &localTm);
+  char tzBuf[8] = {0};
+  std::strftime(tzBuf, sizeof(tzBuf), "%z", &localTm);
+
+  std::ostringstream out;
+  out << "{";
+  out << "\"ok\":true,";
+  out << "\"epoch\":" << static_cast<long long>(now) << ",";
+  out << "\"iso\":\"" << isoBuf << tzBuf << "\",";
+  out << "\"time\":\"" << hhmmBuf << "\",";
+  out << "\"timezone\":\"" << tzBuf << "\"";
+  out << "}\n";
+  return out.str();
+}
+
 std::string rolesJson(const RolePolicy &policy) {
   auto permissions = permissionsForRole(policy, currentRole(policy));
   std::ostringstream out;
@@ -1055,6 +1080,60 @@ CommandResult runProgram(const std::string &path, const std::vector<std::string>
   return {1, output};
 }
 
+// Power control plane. Chromium never calls shutdown directly: the browser
+// POSTs to suvos-gateway, which forwards `power <action>` here. suvosd owns the
+// capability check and the privileged action.
+//
+// Real SuvOS sets SUVOS_POWER_MODE=real (done by /init). Any other value -
+// including unset, e.g. the Docker dev gateway - is treated as mock and only
+// reports what would happen, never touching the host/container.
+bool powerModeReal() {
+  const char *mode = std::getenv("SUVOS_POWER_MODE");
+  return mode != nullptr && std::string(mode) == "real";
+}
+
+CommandResult powerAction(const std::string &action) {
+  if (!powerModeReal()) {
+    std::ostringstream out;
+    out << "{\"ok\":true,\"mode\":\"mock\",\"action\":\"" << action << "\"}\n";
+    return {0, out.str()};
+  }
+
+  // Real mode: flush state before handing off. Full teardown (close services,
+  // unmount writable layers, poweroff) belongs to a system power helper that
+  // /init provides; suvosd delegates to it and falls back to a direct reboot
+  // syscall for shutdown/reboot when the helper is absent.
+  logConsole("power: " + action + " requested (real mode)");
+  sync();
+
+  const std::string helper = std::string(kSystemRoot) + "/bin/suvos-power";
+  if (fileExistsExecutable(helper)) {
+    CommandResult helperResult = runProgram(helper, {action});
+    if (helperResult.code == 0) {
+      std::ostringstream out;
+      out << "{\"ok\":true,\"mode\":\"real\",\"action\":\"" << action
+          << "\",\"via\":\"helper\"}\n";
+      return {0, out.str()};
+    }
+    return helperResult;
+  }
+
+  if (action == "logout") {
+    // Session teardown without poweroff is the helper's job; report ok so the
+    // browser shell can return to a login surface.
+    return {0, "{\"ok\":true,\"mode\":\"real\",\"action\":\"logout\"}\n"};
+  }
+
+  sync();
+  if (action == "reboot") {
+    reboot(RB_AUTOBOOT);
+  } else {  // shutdown
+    reboot(RB_POWER_OFF);
+  }
+  // reboot() does not return on success.
+  return {1, "{\"ok\":false,\"mode\":\"real\",\"error\":\"power_failed\"}\n"};
+}
+
 CommandResult handleCommand(const std::vector<std::string> &parts) {
   if (parts.empty()) {
     return {2, tr("missing_command")};
@@ -1096,6 +1175,28 @@ CommandResult handleCommand(const std::vector<std::string> &parts) {
     }
 
     return {0, statusJson()};
+  }
+
+  if (command == "time-json") {
+    if (!hasPermission(policy, "status.read")) {
+      return {1, tr("permission.denied") + "status.read\n"};
+    }
+
+    return {0, timeJson()};
+  }
+
+  if (command == "power") {
+    if (parts.size() < 2) {
+      return {2, "missing power action\n"};
+    }
+    const std::string &action = parts[1];
+    if (action != "shutdown" && action != "reboot" && action != "logout") {
+      return {2, "unknown power action: " + action + "\n"};
+    }
+    if (!hasPermission(policy, "system.power")) {
+      return {1, tr("permission.denied") + "system.power\n"};
+    }
+    return powerAction(action);
   }
 
   if (command == "roles" || command == "role") {

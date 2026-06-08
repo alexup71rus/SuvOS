@@ -12,7 +12,6 @@ WITH_GUI="${SUVOS_WITH_GUI:-0}"
 WITH_AEC="${SUVOS_WITH_AEC:-0}"
 WITH_DEVTOOLS="${SUVOS_WITH_DEVTOOLS:-0}"
 LOCKFILE="${SUVOS_VENDORS_LOCKFILE:-$ROOT_DIR/third_party/vendors.lock.json}"
-LEGACY_AEC_REPO="$ROOT_DIR/../admin-explorer-code"
 
 lock_value() {
   python3 "$ROOT_DIR/scripts/vendor-lock.py" --lockfile "$LOCKFILE" get aec "$1" 2>/dev/null || true
@@ -32,11 +31,6 @@ resolve_aec_repo() {
 
   if [ -n "$LOCKED_AEC_REPO" ] && [ -d "$LOCKED_AEC_REPO" ]; then
     printf '%s\n' "$LOCKED_AEC_REPO"
-    return 0
-  fi
-
-  if [ -d "$LEGACY_AEC_REPO" ]; then
-    printf '%s\n' "$LEGACY_AEC_REPO"
     return 0
   fi
 

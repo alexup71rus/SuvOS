@@ -5,7 +5,6 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 . "$ROOT_DIR/scripts/suvos-arch.sh"
 ARCH="$(suvos_arch)"
 LOCKFILE="${SUVOS_VENDORS_LOCKFILE:-$ROOT_DIR/third_party/vendors.lock.json}"
-LEGACY_CHROMIUM_REPO="$ROOT_DIR/../SuvOS_Chromium"
 
 lock_value() {
   python3 "$ROOT_DIR/scripts/vendor-lock.py" --lockfile "$LOCKFILE" get chromium "$1" 2>/dev/null || true
@@ -38,12 +37,6 @@ resolve_chromium_repo() {
     printf '%s\n' "$LOCKED_CHROMIUM_REPO"
     return 0
   fi
-
-  if [ -d "$LEGACY_CHROMIUM_REPO" ]; then
-    printf '%s\n' "$LEGACY_CHROMIUM_REPO"
-    return 0
-  fi
-
   if [ -n "$LOCKED_CHROMIUM_REPO" ]; then
     echo "Chromium checkout not found: $LOCKED_CHROMIUM_REPO" >&2
     echo "Run: $ROOT_DIR/scripts/bootstrap-vendors.sh chromium" >&2
@@ -74,11 +67,9 @@ fi
 chromium_source_is_newer_than_artifact() {
   [ -s "$CHROMIUM_DIST" ] || return 0
   [ -d "$CHROMIUM_REPO" ] || return 1
+  [ -d "$CHROMIUM_REPO/suvos" ] || return 0
 
-  find \
-    "$CHROMIUM_REPO/scripts" \
-    "$CHROMIUM_REPO/Makefile" \
-    "$CHROMIUM_REPO/README.md" \
+  find "$CHROMIUM_REPO/suvos" \
     -path '*/dist' -prune -o \
     -path '*/dist/*' -prune -o \
     -path '*/build' -prune -o \
@@ -96,14 +87,22 @@ if [ -s "$CHROMIUM_DIST" ] && [ "${SUVOS_REFRESH_CHROMIUM:-0}" != "1" ]; then
   echo "chromium artifact is stale, rebuilding: $CHROMIUM_DIST"
 fi
 
-BUILD_SCRIPT="$CHROMIUM_REPO/scripts/build-chromium-artifact.sh"
-if [ ! -x "$BUILD_SCRIPT" ]; then
-  echo "Chromium artifact is missing and build script is unavailable: $BUILD_SCRIPT" >&2
+BUILD_SCRIPT=""
+for candidate in \
+  "$CHROMIUM_REPO/suvos/build-chromium-artifact.sh" \
+  "$CHROMIUM_REPO/scripts/build-chromium-artifact.sh"; do
+  [ -f "$candidate" ] || continue
+  BUILD_SCRIPT="$candidate"
+  break
+done
+
+if [ -z "$BUILD_SCRIPT" ]; then
+  echo "Chromium artifact is missing and build script is unavailable in: $CHROMIUM_REPO" >&2
   echo "Create the sibling SuvOS_Chromium repo or set SUVOS_CHROMIUM_DIST." >&2
   exit 1
 fi
 
-CHROMIUM_TARGET_ARCH="$ARCH" "$BUILD_SCRIPT"
+CHROMIUM_TARGET_ARCH="$ARCH" bash "$BUILD_SCRIPT"
 
 if [ ! -s "$CHROMIUM_DIST" ]; then
   echo "Chromium artifact build finished but artifact is missing: $CHROMIUM_DIST" >&2
