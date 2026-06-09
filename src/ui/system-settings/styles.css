@@ -63,6 +63,20 @@ button.primary {
   border-bottom: 1px solid var(--line);
 }
 
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.brand-logo {
+  flex: none;
+  width: 30px;
+  height: 31px;
+  color: var(--accent, currentColor);
+}
+
 .topbar-actions {
   display: flex;
   align-items: center;
