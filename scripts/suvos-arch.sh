@@ -46,14 +46,27 @@ suvos_aec_target_arch() {
 }
 
 suvos_qemu_bin() {
+  local bin
   case "$1" in
-    x86_64) echo "/opt/homebrew/bin/qemu-system-x86_64" ;;
-    aarch64) echo "/opt/homebrew/bin/qemu-system-aarch64" ;;
+    x86_64) bin="qemu-system-x86_64" ;;
+    aarch64) bin="qemu-system-aarch64" ;;
     *)
       echo "unsupported QEMU arch: $1" >&2
       return 2
       ;;
   esac
+
+  if command -v "$bin" >/dev/null 2>&1; then
+    command -v "$bin"
+    return 0
+  fi
+
+  if [ "$(uname -s 2>/dev/null || true)" = "Darwin" ] && [ -x "/opt/homebrew/bin/$bin" ]; then
+    echo "/opt/homebrew/bin/$bin"
+    return 0
+  fi
+
+  echo "$bin"
 }
 
 suvos_kernel_path() {
@@ -95,6 +108,13 @@ suvos_default_accel() {
   local host_arch
   host_arch="$(uname -m)"
   case "$arch:$host_arch" in
+    x86_64:x86_64)
+      if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+        echo "kvm"
+      else
+        echo "tcg"
+      fi
+      ;;
     aarch64:arm64) echo "hvf" ;;
     *) echo "tcg" ;;
   esac
@@ -104,6 +124,7 @@ suvos_default_cpu_model() {
   local arch="$1"
   local accel="${2:-}"
   case "$arch:$accel" in
+    x86_64:kvm) echo "host" ;;
     aarch64:hvf) echo "host" ;;
     *) echo "max" ;;
   esac

@@ -13,7 +13,16 @@ GUI_HEIGHT="${SUVOS_GUI_HEIGHT:-800}"
 GUI_CONNECTOR="${SUVOS_GUI_CONNECTOR:-Virtual-1}"
 GUI_KERNEL_VIDEO="${SUVOS_GUI_KERNEL_VIDEO:-video=${GUI_CONNECTOR}:${GUI_WIDTH}x${GUI_HEIGHT}-32}"
 GUI_INPUT_DEVICES="${SUVOS_GUI_INPUT_DEVICES:--device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0 -device usb-tablet,bus=xhci.0 -device usb-mouse,bus=xhci.0}"
-GUI_AUDIO_DEVICES="${SUVOS_GUI_AUDIO_DEVICES:--audiodev coreaudio,id=suvos-audio,out.mixing-engine=on -device virtio-sound-pci,audiodev=suvos-audio,streams=1}"
+HOST_OS="$(uname -s 2>/dev/null || true)"
+if [ "$HOST_OS" = "Darwin" ]; then
+  DEFAULT_QEMU_DISPLAY="cocoa"
+  DEFAULT_QEMU_AUDIO_BACKEND="coreaudio"
+else
+  DEFAULT_QEMU_DISPLAY="gtk"
+  DEFAULT_QEMU_AUDIO_BACKEND="pa"
+fi
+GUI_AUDIO_BACKEND="${SUVOS_QEMU_AUDIO_BACKEND:-$DEFAULT_QEMU_AUDIO_BACKEND}"
+GUI_AUDIO_DEVICES="${SUVOS_GUI_AUDIO_DEVICES:--audiodev $GUI_AUDIO_BACKEND,id=suvos-audio,out.mixing-engine=on -device virtio-sound-pci,audiodev=suvos-audio,streams=1}"
 GUI_EXTRA_QEMU_ARGS="${SUVOS_EXTRA_QEMU_ARGS:-$GUI_INPUT_DEVICES $GUI_AUDIO_DEVICES}"
 GUI_WITH_AEC="${SUVOS_GUI_WITH_AEC:-1}"
 GUI_VIDEO_DEVICE_DEFAULT="virtio-vga,xres=$GUI_WIDTH,yres=$GUI_HEIGHT,edid=on"
@@ -36,7 +45,7 @@ fi
 
 SUVOS_MEMORY="${SUVOS_MEMORY:-3072M}" \
 SUVOS_CPUS="${SUVOS_CPUS:-4}" \
-SUVOS_DISPLAY="${SUVOS_DISPLAY:-cocoa}" \
+SUVOS_DISPLAY="${SUVOS_DISPLAY:-${SUVOS_QEMU_DISPLAY:-$DEFAULT_QEMU_DISPLAY}}" \
 SUVOS_VIDEO_DEVICE="${SUVOS_VIDEO_DEVICE:-$GUI_VIDEO_DEVICE_DEFAULT}" \
 SUVOS_EXTRA_QEMU_ARGS="$GUI_EXTRA_QEMU_ARGS -monitor unix:$MONITOR_SOCK,server,nowait" \
 SUVOS_APPEND="${SUVOS_APPEND:-console=$CONSOLE rdinit=/init quiet loglevel=3 panic=-1 $GUI_KERNEL_VIDEO suvos.graphics=1 suvos.gui=1 suvos.render=$RENDER_PROFILE$GUI_AEC_APPEND}" \
