@@ -3,7 +3,7 @@
     "aec": {
       "path": "third_party/SuvOS_AEC",
       "repo": "https://github.com/alexup71rus/SuvOS_AEC.git",
-      "ref": "8819a21b1e7252df96dddefc12f7b87c1a41cd31",
+      "ref": "14e3559d2c2e7e5e939908cb3a64c5a665d73a74",
       "tag": null,
       "optional": false,
       "bootstrap": true
