@@ -40,6 +40,8 @@ EOF
   docker run --rm --platform "$DOCKER_PLATFORM" \
     -e LAYER_PACKAGES="$PACKAGES" \
     -e LAYER_POST_INSTALL="$POST_INSTALL" \
+    -e SUVOS_HOST_UID="$(id -u)" \
+    -e SUVOS_HOST_GID="$(id -g)" \
     -v "$target_root:/suvos-root" \
     -v "$APK_CACHE_DIR:/apk-cache" \
     "$IMAGE" \
@@ -58,6 +60,7 @@ EOF
       fi
 
       rm -rf /suvos-root/var/cache/apk/*
+      chown -R "$SUVOS_HOST_UID:$SUVOS_HOST_GID" /suvos-root /apk-cache 2>/dev/null || true
     '
 }
 
