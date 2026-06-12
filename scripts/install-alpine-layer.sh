@@ -17,7 +17,7 @@ ARCH="$(suvos_arch)"
 DOCKER_PLATFORM="$(suvos_docker_platform "$ARCH")"
 ALPINE_VERSION="${SUVOS_ALPINE_VERSION:-3.22}"
 IMAGE="${SUVOS_ALPINE_IMAGE:-alpine:$ALPINE_VERSION}"
-LAYER_SCHEMA="2"
+LAYER_SCHEMA="3"
 REFRESH_LAYER_CACHE="${SUVOS_REFRESH_LAYER_CACHE:-0}"
 DISABLE_LAYER_CACHE="${SUVOS_DISABLE_LAYER_CACHE:-0}"
 
@@ -60,6 +60,7 @@ EOF
       fi
 
       rm -rf /suvos-root/var/cache/apk/*
+      find /suvos-root/dev -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
       chown -R "$SUVOS_HOST_UID:$SUVOS_HOST_GID" /suvos-root /apk-cache 2>/dev/null || true
     '
 }
