@@ -16,6 +16,7 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/reboot.h>
@@ -44,10 +45,15 @@ constexpr const char *kSessionAuthFile = "/run/suvosd/session.auth";
 constexpr const char *kNetworkStateDir = "/data/suvos/network";
 constexpr const char *kNetworkConfigPath = "/data/suvos/network/network.conf";
 constexpr const char *kWifiConfigPath = "/data/suvos/network/wifi.conf";
+constexpr const char *kWifiSupplicantConfigPath = "/data/suvos/network/wpa_supplicant.conf";
+constexpr const char *kWifiSupplicantPidPath = "/run/suvosd/wpa_supplicant.pid";
+constexpr const char *kTimeStateDir = "/data/suvos/time";
+constexpr const char *kTimeConfigPath = "/data/suvos/time/time.conf";
 constexpr const char *kNotificationsDir = "/data/suvos/notifications";
 constexpr const char *kNotificationsPath = "/data/suvos/notifications/notifications.tsv";
 constexpr const char *kCalendarDir = "/data/suvos/calendar";
 constexpr const char *kCalendarEventsPath = "/data/suvos/calendar/events.tsv";
+constexpr const char *kStateLockPath = "/data/suvos/state/suvosd-state.lock";
 constexpr const char *kExitPrefix = "__SUVOSD_EXIT__:";
 constexpr int kResponseOpenRetries = 200;
 constexpr int kResponseOpenSleepMicros = 10000;
@@ -418,6 +424,36 @@ bool writeFile(const std::string &path, const std::string &data, mode_t mode) {
   chmod(path.c_str(), mode);
   return true;
 }
+
+class ScopedFileLock {
+ public:
+  explicit ScopedFileLock(const std::string &path) {
+    ensureDir(kDataRoot, 0755);
+    const std::string stateDir = std::string(kDataRoot) + "/state";
+    ensureDir(stateDir.c_str(), 0700);
+    fd_ = open(path.c_str(), O_CREAT | O_RDWR, 0600);
+    if (fd_ >= 0 && flock(fd_, LOCK_EX) == 0) {
+      locked_ = true;
+    }
+  }
+
+  ~ScopedFileLock() {
+    if (fd_ >= 0) {
+      if (locked_) {
+        flock(fd_, LOCK_UN);
+      }
+      close(fd_);
+    }
+  }
+
+  bool locked() const {
+    return locked_;
+  }
+
+ private:
+  int fd_ = -1;
+  bool locked_ = false;
+};
 
 uint32_t rotateRight(uint32_t value, uint32_t bits) {
   return (value >> bits) | (value << (32 - bits));
@@ -903,7 +939,61 @@ std::string statusJson() {
   return out.str();
 }
 
+bool ensureTimeStateDir() {
+  ensureDir(kDataRoot, 0755);
+  return ensureDir(kTimeStateDir, 0700);
+}
+
+bool validTimezoneName(const std::string &value) {
+  if (value.empty() || value.size() > 96 || value.find("..") != std::string::npos ||
+      hasControlChar(value)) {
+    return false;
+  }
+  for (char ch : value) {
+    const bool allowed = (ch >= 'A' && ch <= 'Z') ||
+                         (ch >= 'a' && ch <= 'z') ||
+                         (ch >= '0' && ch <= '9') ||
+                         ch == '_' || ch == '-' || ch == '+' || ch == '/' || ch == ':';
+    if (!allowed) {
+      return false;
+    }
+  }
+  return true;
+}
+
+std::string configuredTimezone() {
+  std::istringstream lines(readFile(kTimeConfigPath));
+  std::string line;
+  while (std::getline(lines, line)) {
+    line = trim(line);
+    if (line.rfind("timezone=", 0) != 0) {
+      continue;
+    }
+    const std::string value = line.substr(std::strlen("timezone="));
+    return validTimezoneName(value) ? value : "";
+  }
+  return "";
+}
+
+bool applyTimezone(const std::string &timezone) {
+  if (!validTimezoneName(timezone)) {
+    return false;
+  }
+  setenv("TZ", timezone.c_str(), 1);
+  tzset();
+  return writeFile("/etc/TZ", timezone + "\n", 0644);
+}
+
+bool applySavedTimezone() {
+  const std::string timezone = configuredTimezone();
+  if (timezone.empty()) {
+    return true;
+  }
+  return applyTimezone(timezone);
+}
+
 std::string timeJson() {
+  applySavedTimezone();
   std::time_t now = std::time(nullptr);
   std::tm localTm {};
   localtime_r(&now, &localTm);
@@ -921,7 +1011,8 @@ std::string timeJson() {
   out << "\"epoch\":" << static_cast<long long>(now) << ",";
   out << "\"iso\":\"" << isoBuf << tzBuf << "\",";
   out << "\"time\":\"" << hhmmBuf << "\",";
-  out << "\"timezone\":\"" << tzBuf << "\"";
+  out << "\"timezone\":\"" << tzBuf << "\",";
+  out << "\"configuredTimezone\":\"" << jsonEscape(configuredTimezone()) << "\"";
   out << "}\n";
   return out.str();
 }
@@ -1226,6 +1317,11 @@ std::string optionValue(const std::map<std::string, std::string> &options,
   return item == options.end() ? "" : item->second;
 }
 
+bool optionPresent(const std::map<std::string, std::string> &options,
+                   const std::string &key) {
+  return options.find(key) != options.end();
+}
+
 bool ensureNetworkStateDir() {
   ensureDir(kDataRoot, 0755);
   return ensureDir(kNetworkStateDir, 0700);
@@ -1243,10 +1339,169 @@ std::string networkConfigJson() {
   out << "\"mode\":\"" << jsonEscape(mode) << "\",";
   out << "\"interface\":\"" << jsonEscape(optionValue(config, "interface")) << "\",";
   out << "\"address\":\"" << jsonEscape(optionValue(config, "address")) << "\",";
+  out << "\"netmask\":\"" << jsonEscape(optionValue(config, "netmask")) << "\",";
   out << "\"gateway\":\"" << jsonEscape(optionValue(config, "gateway")) << "\",";
   out << "\"dns\":\"" << jsonEscape(optionValue(config, "dns")) << "\"";
   out << "}\n";
   return out.str();
+}
+
+std::vector<std::string> networkInterfaces(bool includeLoopback) {
+  std::vector<std::string> names;
+  for (const auto &name : listDirNames("/sys/class/net")) {
+    if (!includeLoopback && name == "lo") {
+      continue;
+    }
+    if (validDeviceName(name)) {
+      names.push_back(name);
+    }
+  }
+  return names;
+}
+
+std::string firstNetworkInterface() {
+  const auto names = networkInterfaces(false);
+  return names.empty() ? "" : names[0];
+}
+
+bool writeResolvConf(const std::string &dns) {
+  if (dns.empty()) {
+    return true;
+  }
+
+  std::ostringstream out;
+  for (const auto &server : splitList(dns)) {
+    if (!validConfigValue(server, 128)) {
+      return false;
+    }
+    out << "nameserver " << server << "\n";
+  }
+  return writeFile("/etc/resolv.conf", out.str(), 0644);
+}
+
+CommandResult applyDhcpNetwork(const std::string &iface) {
+  const std::string ifconfig = findExecutable({
+      "/bin/ifconfig", "/sbin/ifconfig", "/usr/bin/ifconfig", "/usr/sbin/ifconfig"});
+  if (ifconfig.empty()) {
+    return {1, "{\"ok\":false,\"available\":true,\"applied\":false,\"error\":\"ifconfig_missing\"}\n"};
+  }
+
+  CommandResult up = runProgram(ifconfig, {iface, "up"});
+  if (up.code != 0) {
+    std::ostringstream out;
+    out << "{\"ok\":false,\"available\":true,\"applied\":false,\"interface\":\""
+        << jsonEscape(iface) << "\",\"error\":\"interface_up_failed\"}\n";
+    return {1, out.str()};
+  }
+
+  const std::string udhcpc = findExecutable({
+      "/bin/udhcpc", "/sbin/udhcpc", "/usr/bin/udhcpc", "/usr/sbin/udhcpc"});
+  if (udhcpc.empty()) {
+    std::ostringstream out;
+    out << "{\"ok\":false,\"available\":true,\"applied\":false,\"interface\":\""
+        << jsonEscape(iface) << "\",\"error\":\"dhcp_client_missing\"}\n";
+    return {1, out.str()};
+  }
+
+  CommandResult dhcp = runProgram(
+      udhcpc, {"-i", iface, "-q", "-n", "-t", "3", "-T", "3", "-s",
+               std::string(kSystemRoot) + "/bin/suvos-udhcpc-script"});
+  const bool success = dhcp.code == 0;
+  std::ostringstream out;
+  out << "{\"ok\":" << jsonBool(success) << ",\"available\":true,\"configured\":true,";
+  out << "\"mode\":\"dhcp\",";
+  out << "\"interface\":\"" << jsonEscape(iface) << "\",";
+  out << "\"applied\":" << jsonBool(success);
+  if (!success) {
+    out << ",\"error\":\"dhcp_failed\",";
+    out << "\"details\":\"" << jsonEscape(trim(dhcp.output)) << "\"";
+  }
+  out << "}\n";
+  return {success ? 0 : 1, out.str()};
+}
+
+CommandResult applyStaticNetwork(const std::string &iface,
+                                 const std::string &address,
+                                 const std::string &netmask,
+                                 const std::string &gateway,
+                                 const std::string &dns) {
+  const std::string ifconfig = findExecutable({
+      "/bin/ifconfig", "/sbin/ifconfig", "/usr/bin/ifconfig", "/usr/sbin/ifconfig"});
+  if (ifconfig.empty()) {
+    return {1, "{\"ok\":false,\"available\":true,\"applied\":false,\"error\":\"ifconfig_missing\"}\n"};
+  }
+
+  std::vector<std::string> args = {iface, address};
+  if (!netmask.empty()) {
+    args.push_back("netmask");
+    args.push_back(netmask);
+  }
+  args.push_back("up");
+  CommandResult setAddress = runProgram(ifconfig, args);
+  if (setAddress.code != 0) {
+    std::ostringstream out;
+    out << "{\"ok\":false,\"available\":true,\"applied\":false,\"interface\":\""
+        << jsonEscape(iface) << "\",\"mode\":\"static\",\"error\":\"static_address_failed\",";
+    out << "\"details\":\"" << jsonEscape(trim(setAddress.output)) << "\"}\n";
+    return {1, out.str()};
+  }
+
+  if (!gateway.empty()) {
+    const std::string route = findExecutable({
+        "/bin/route", "/sbin/route", "/usr/bin/route", "/usr/sbin/route"});
+    if (route.empty()) {
+      return {1, "{\"ok\":false,\"available\":true,\"applied\":false,\"mode\":\"static\",\"error\":\"route_missing\"}\n"};
+    }
+    (void)runProgram(route, {"del", "default", "dev", iface});
+    CommandResult routeAdd = runProgram(route, {"add", "default", "gw", gateway, "dev", iface});
+    if (routeAdd.code != 0) {
+      std::ostringstream out;
+      out << "{\"ok\":false,\"available\":true,\"applied\":false,\"interface\":\""
+          << jsonEscape(iface) << "\",\"mode\":\"static\",\"error\":\"default_route_failed\",";
+      out << "\"details\":\"" << jsonEscape(trim(routeAdd.output)) << "\"}\n";
+      return {1, out.str()};
+    }
+  }
+
+  if (!writeResolvConf(dns)) {
+    return {1, "{\"ok\":false,\"available\":true,\"applied\":false,\"mode\":\"static\",\"error\":\"dns_write_failed\"}\n"};
+  }
+
+  std::ostringstream out;
+  out << "{\"ok\":true,\"available\":true,\"configured\":true,\"mode\":\"static\",";
+  out << "\"interface\":\"" << jsonEscape(iface) << "\",";
+  out << "\"address\":\"" << jsonEscape(address) << "\",";
+  out << "\"netmask\":\"" << jsonEscape(netmask) << "\",";
+  out << "\"gateway\":\"" << jsonEscape(gateway) << "\",";
+  out << "\"applied\":true}\n";
+  return {0, out.str()};
+}
+
+CommandResult applyNetworkConfig(const std::map<std::string, std::string> &config) {
+  const std::string mode = optionValue(config, "mode").empty() ? "dhcp" : optionValue(config, "mode");
+  std::string iface = optionValue(config, "interface");
+  const std::string address = optionValue(config, "address");
+  const std::string netmask = optionValue(config, "netmask");
+  const std::string gateway = optionValue(config, "gateway");
+  const std::string dns = optionValue(config, "dns");
+
+  if (iface.empty()) {
+    iface = firstNetworkInterface();
+  }
+  if (iface.empty()) {
+    std::ostringstream out;
+    out << "{\"ok\":true,\"available\":false,\"configured\":true,\"mode\":\""
+        << jsonEscape(mode) << "\",\"applied\":false,\"reason\":\"no_network_interface\"}\n";
+    return {0, out.str()};
+  }
+  if (!validDeviceName(iface) || !dirExists("/sys/class/net/" + iface) || iface == "lo") {
+    return {2, "{\"ok\":false,\"error\":\"invalid_interface\"}\n"};
+  }
+
+  if (mode == "dhcp") {
+    return applyDhcpNetwork(iface);
+  }
+  return applyStaticNetwork(iface, address, netmask, gateway, dns);
 }
 
 CommandResult networkConfigure(const std::map<std::string, std::string> &options) {
@@ -1257,6 +1512,7 @@ CommandResult networkConfigure(const std::map<std::string, std::string> &options
   const std::string mode = optionValue(options, "mode").empty() ? "dhcp" : optionValue(options, "mode");
   const std::string iface = optionValue(options, "interface");
   const std::string address = optionValue(options, "address");
+  const std::string netmask = optionValue(options, "netmask");
   const std::string gateway = optionValue(options, "gateway");
   const std::string dns = optionValue(options, "dns");
 
@@ -1267,6 +1523,7 @@ CommandResult networkConfigure(const std::map<std::string, std::string> &options
     return {2, "{\"ok\":false,\"error\":\"invalid_interface\"}\n"};
   }
   if (!validConfigValue(address, 128) ||
+      !validConfigValue(netmask, 128) ||
       !validConfigValue(gateway, 128) ||
       !validConfigValue(dns, 256)) {
     return {2, "{\"ok\":false,\"error\":\"invalid_network_config\"}\n"};
@@ -1283,34 +1540,14 @@ CommandResult networkConfigure(const std::map<std::string, std::string> &options
   data << "mode=" << mode << "\n";
   data << "interface=" << iface << "\n";
   data << "address=" << address << "\n";
+  data << "netmask=" << netmask << "\n";
   data << "gateway=" << gateway << "\n";
   data << "dns=" << dns << "\n";
   if (!writeFile(kNetworkConfigPath, data.str(), 0600)) {
     return {1, "{\"ok\":false,\"error\":\"network_config_write_failed\"}\n"};
   }
 
-  std::ostringstream out;
-  out << "{";
-  out << "\"ok\":true,";
-  out << "\"configured\":true,";
-  out << "\"mode\":\"" << jsonEscape(mode) << "\",";
-  out << "\"applied\":false,";
-  out << "\"reason\":\"network_apply_not_implemented\"";
-  out << "}\n";
-  return {0, out.str()};
-}
-
-std::vector<std::string> networkInterfaces(bool includeLoopback) {
-  std::vector<std::string> names;
-  for (const auto &name : listDirNames("/sys/class/net")) {
-    if (!includeLoopback && name == "lo") {
-      continue;
-    }
-    if (validDeviceName(name)) {
-      names.push_back(name);
-    }
-  }
-  return names;
+  return applyNetworkConfig(parseKeyValueFile(kNetworkConfigPath));
 }
 
 bool hasDefaultRoute() {
@@ -1474,16 +1711,156 @@ std::string wifiConfigJson() {
   auto config = parseKeyValueFile(kWifiConfigPath);
   const std::string ssid = optionValue(config, "ssid");
   const std::string psk = optionValue(config, "psk");
+  const std::string iface = optionValue(config, "interface");
 
   std::ostringstream out;
   out << "{";
   out << "\"ok\":true,";
   out << "\"configured\":" << jsonBool(!ssid.empty()) << ",";
+  out << "\"interface\":\"" << jsonEscape(iface) << "\",";
   out << "\"ssid\":\"" << jsonEscape(ssid) << "\",";
   out << "\"hasPsk\":" << jsonBool(!psk.empty()) << ",";
   out << "\"path\":\"" << jsonEscape(kWifiConfigPath) << "\"";
   out << "}\n";
   return out.str();
+}
+
+std::string wpaQuoted(const std::string &value) {
+  std::ostringstream out;
+  out << "\"";
+  for (char ch : value) {
+    if (ch == '\\' || ch == '"') {
+      out << "\\";
+    }
+    out << ch;
+  }
+  out << "\"";
+  return out.str();
+}
+
+void stopWifiSupplicant(const std::string &iface) {
+  const std::string wpaCli = findExecutable({
+      "/sbin/wpa_cli", "/usr/sbin/wpa_cli", "/bin/wpa_cli", "/usr/bin/wpa_cli"});
+  if (!wpaCli.empty() && !iface.empty()) {
+    (void)runProgram(wpaCli, {"-i", iface, "terminate"});
+  }
+
+  long long pid = 0;
+  if (parseLongLong(readTrimmed(kWifiSupplicantPidPath), &pid) && pid > 1) {
+    kill(static_cast<pid_t>(pid), SIGTERM);
+    usleep(200000);
+    kill(static_cast<pid_t>(pid), SIGKILL);
+  }
+  unlink(kWifiSupplicantPidPath);
+}
+
+bool writeWifiSupplicantConfig(const std::string &ssid, const std::string &psk) {
+  std::ostringstream conf;
+  conf << "ctrl_interface=/run/wpa_supplicant\n";
+  conf << "update_config=0\n";
+  conf << "network={\n";
+  conf << "\tssid=" << wpaQuoted(ssid) << "\n";
+  if (psk.empty()) {
+    conf << "\tkey_mgmt=NONE\n";
+  } else {
+    conf << "\tpsk=" << wpaQuoted(psk) << "\n";
+  }
+  conf << "}\n";
+  return writeFile(kWifiSupplicantConfigPath, conf.str(), 0600);
+}
+
+CommandResult applyWifiConfig(const std::map<std::string, std::string> &config) {
+  const std::string ssid = optionValue(config, "ssid");
+  const std::string psk = optionValue(config, "psk");
+  std::string iface = optionValue(config, "interface");
+  if (iface.empty()) {
+    const auto names = wirelessInterfaces();
+    iface = names.empty() ? "" : names[0];
+  }
+
+  if (ssid.empty()) {
+    return {0, "{\"ok\":true,\"configured\":false,\"applied\":false,\"reason\":\"wifi_not_configured\"}\n"};
+  }
+  if (iface.empty()) {
+    std::ostringstream out;
+    out << "{\"ok\":true,\"available\":false,\"configured\":true,\"ssid\":\""
+        << jsonEscape(ssid) << "\",\"hasPsk\":" << jsonBool(!psk.empty())
+        << ",\"applied\":false,\"reason\":\"no_wireless_interface\"}\n";
+    return {0, out.str()};
+  }
+  if (!validDeviceName(iface) || !dirExists("/sys/class/net/" + iface + "/wireless")) {
+    return {2, "{\"ok\":false,\"error\":\"invalid_wireless_interface\"}\n"};
+  }
+
+  const std::string wpaSupplicant = findExecutable({
+      "/sbin/wpa_supplicant", "/usr/sbin/wpa_supplicant",
+      "/bin/wpa_supplicant", "/usr/bin/wpa_supplicant"});
+  const std::string wpaCli = findExecutable({
+      "/sbin/wpa_cli", "/usr/sbin/wpa_cli", "/bin/wpa_cli", "/usr/bin/wpa_cli"});
+  if (wpaSupplicant.empty()) {
+    return {1, "{\"ok\":false,\"available\":true,\"configured\":true,\"applied\":false,\"error\":\"wpa_supplicant_missing\"}\n"};
+  }
+  if (wpaCli.empty()) {
+    return {1, "{\"ok\":false,\"available\":true,\"configured\":true,\"applied\":false,\"error\":\"wpa_cli_missing\"}\n"};
+  }
+  if (!ensureNetworkStateDir() ||
+      !ensureDir("/run/wpa_supplicant", 0755) ||
+      !writeWifiSupplicantConfig(ssid, psk)) {
+    return {1, "{\"ok\":false,\"available\":true,\"configured\":true,\"applied\":false,\"error\":\"wifi_config_write_failed\"}\n"};
+  }
+
+  (void)networkAction("enable", iface);
+  stopWifiSupplicant(iface);
+  CommandResult start = runProgram(
+      wpaSupplicant, {"-B", "-i", iface, "-c", kWifiSupplicantConfigPath,
+                      "-P", kWifiSupplicantPidPath});
+  if (start.code != 0) {
+    std::ostringstream out;
+    out << "{\"ok\":false,\"available\":true,\"configured\":true,\"applied\":false,";
+    out << "\"interface\":\"" << jsonEscape(iface) << "\",";
+    out << "\"error\":\"wpa_supplicant_start_failed\",";
+    out << "\"details\":\"" << jsonEscape(trim(start.output)) << "\"}\n";
+    return {1, out.str()};
+  }
+
+  bool associated = false;
+  std::string lastStatus;
+  for (int attempt = 0; attempt < 12; ++attempt) {
+    CommandResult status = runProgram(wpaCli, {"-i", iface, "status"});
+    lastStatus = status.output;
+    if (status.code == 0 && status.output.find("wpa_state=COMPLETED") != std::string::npos) {
+      associated = true;
+      break;
+    }
+    sleep(1);
+  }
+
+  if (!associated) {
+    std::ostringstream out;
+    out << "{\"ok\":false,\"available\":true,\"configured\":true,\"applied\":false,";
+    out << "\"interface\":\"" << jsonEscape(iface) << "\",";
+    out << "\"ssid\":\"" << jsonEscape(ssid) << "\",";
+    out << "\"hasPsk\":" << jsonBool(!psk.empty()) << ",";
+    out << "\"error\":\"wifi_association_failed\",";
+    out << "\"details\":\"" << jsonEscape(trim(lastStatus)) << "\"}\n";
+    return {1, out.str()};
+  }
+
+  CommandResult dhcp = applyDhcpNetwork(iface);
+  const bool success = dhcp.code == 0;
+  std::ostringstream out;
+  out << "{\"ok\":" << jsonBool(success) << ",\"available\":true,\"configured\":true,";
+  out << "\"interface\":\"" << jsonEscape(iface) << "\",";
+  out << "\"ssid\":\"" << jsonEscape(ssid) << "\",";
+  out << "\"hasPsk\":" << jsonBool(!psk.empty()) << ",";
+  out << "\"associated\":true,";
+  out << "\"applied\":" << jsonBool(success);
+  if (!success) {
+    out << ",\"error\":\"wifi_dhcp_failed\",";
+    out << "\"details\":\"" << jsonEscape(trim(dhcp.output)) << "\"";
+  }
+  out << "}\n";
+  return {success ? 0 : 1, out.str()};
 }
 
 CommandResult wifiConnect(const std::map<std::string, std::string> &options) {
@@ -1493,11 +1870,15 @@ CommandResult wifiConnect(const std::map<std::string, std::string> &options) {
 
   const std::string ssid = optionValue(options, "ssid");
   const std::string psk = optionValue(options, "psk");
+  const std::string iface = optionValue(options, "interface");
   if (ssid.empty() || !validConfigValue(ssid, 96)) {
     return {2, "{\"ok\":false,\"error\":\"invalid_ssid\"}\n"};
   }
   if (!validConfigValue(psk, 128)) {
     return {2, "{\"ok\":false,\"error\":\"invalid_psk\"}\n"};
+  }
+  if (!iface.empty() && !validDeviceName(iface)) {
+    return {2, "{\"ok\":false,\"error\":\"invalid_wireless_interface\"}\n"};
   }
 
   if (!ensureNetworkStateDir()) {
@@ -1507,29 +1888,20 @@ CommandResult wifiConnect(const std::map<std::string, std::string> &options) {
   std::ostringstream data;
   data << "ssid=" << ssid << "\n";
   data << "psk=" << psk << "\n";
+  data << "interface=" << iface << "\n";
   if (!writeFile(kWifiConfigPath, data.str(), 0600)) {
     return {1, "{\"ok\":false,\"error\":\"wifi_config_write_failed\"}\n"};
   }
 
-  const bool hasWifiTool = !findExecutable({
-      "/sbin/wpa_cli", "/usr/sbin/wpa_cli", "/bin/wpa_cli", "/usr/bin/wpa_cli",
-      "/usr/bin/nmcli", "/bin/nmcli"}).empty();
-
-  std::ostringstream out;
-  out << "{";
-  out << "\"ok\":true,";
-  out << "\"configured\":true,";
-  out << "\"ssid\":\"" << jsonEscape(ssid) << "\",";
-  out << "\"hasPsk\":" << jsonBool(!psk.empty()) << ",";
-  out << "\"applied\":false,";
-  out << "\"reason\":\"" << (hasWifiTool ? "wifi_apply_deferred" : "wifi_tool_missing") << "\"";
-  out << "}\n";
-  return {0, out.str()};
+  return applyWifiConfig(parseKeyValueFile(kWifiConfigPath));
 }
 
 CommandResult wifiForget() {
+  auto config = parseKeyValueFile(kWifiConfigPath);
+  stopWifiSupplicant(optionValue(config, "interface"));
   unlink(kWifiConfigPath);
-  return {0, "{\"ok\":true,\"configured\":false}\n"};
+  unlink(kWifiSupplicantConfigPath);
+  return {0, "{\"ok\":true,\"configured\":false,\"applied\":true}\n"};
 }
 
 std::string wifiScanJson() {
@@ -1545,6 +1917,7 @@ std::string wifiScanJson() {
 
   std::vector<std::map<std::string, std::string>> networks;
   for (const auto &iface : names) {
+    (void)networkAction("enable", iface);
     CommandResult scan = runProgram(iw, {"dev", iface, "scan"});
     if (scan.code != 0) {
       continue;
@@ -1746,6 +2119,117 @@ std::string bluetoothJson() {
   return out.str();
 }
 
+bool validBluetoothAddress(const std::string &value) {
+  if (value.size() != 17) {
+    return false;
+  }
+  for (size_t i = 0; i < value.size(); ++i) {
+    if (i % 3 == 2) {
+      if (value[i] != ':') {
+        return false;
+      }
+      continue;
+    }
+    if (!std::isxdigit(static_cast<unsigned char>(value[i]))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+std::string bluetoothCtlPath() {
+  return findExecutable({"/usr/bin/bluetoothctl", "/bin/bluetoothctl",
+                         "/usr/sbin/bluetoothctl", "/sbin/bluetoothctl"});
+}
+
+bool bluetoothAvailableForCtl(std::string *reason) {
+  if (bluetoothCtlPath().empty()) {
+    *reason = "bluetoothctl_missing";
+    return false;
+  }
+  if (bluetoothRfkillEntries().empty() && listDirNames("/sys/class/bluetooth").empty()) {
+    *reason = "no_bluetooth_device";
+    return false;
+  }
+  return true;
+}
+
+std::string bluetoothDevicesJson() {
+  std::string reason;
+  if (!bluetoothAvailableForCtl(&reason)) {
+    return "{\"ok\":true,\"available\":false,\"reason\":\"" + reason + "\",\"devices\":[]}\n";
+  }
+
+  CommandResult result = runProgram(bluetoothCtlPath(), {"devices"});
+  std::vector<std::pair<std::string, std::string>> devices;
+  std::istringstream lines(result.output);
+  std::string line;
+  while (std::getline(lines, line)) {
+    line = trim(line);
+    if (line.rfind("Device ", 0) != 0) {
+      continue;
+    }
+    auto parts = split(line, ' ');
+    if (parts.size() < 2 || !validBluetoothAddress(parts[1])) {
+      continue;
+    }
+    const std::string name = line.size() > 25 ? line.substr(25) : "";
+    devices.push_back({parts[1], name});
+  }
+
+  std::ostringstream out;
+  out << "{\"ok\":true,\"available\":true,\"devices\":[";
+  for (size_t i = 0; i < devices.size(); ++i) {
+    if (i > 0) {
+      out << ",";
+    }
+    out << "{\"address\":\"" << jsonEscape(devices[i].first) << "\",";
+    out << "\"name\":\"" << jsonEscape(devices[i].second) << "\"}";
+  }
+  out << "]}\n";
+  return out.str();
+}
+
+CommandResult bluetoothDeviceAction(const std::string &action, const std::string &address) {
+  std::string reason;
+  if (!bluetoothAvailableForCtl(&reason)) {
+    return {0, "{\"ok\":true,\"available\":false,\"reason\":\"" + reason + "\"}\n"};
+  }
+
+  std::vector<std::string> args;
+  if (action == "scan") {
+    args = {"--timeout", "8", "scan", "on"};
+  } else {
+    if (!validBluetoothAddress(address)) {
+      return {2, "{\"ok\":false,\"error\":\"invalid_bluetooth_address\"}\n"};
+    }
+    if (action == "pair" || action == "connect" || action == "disconnect" ||
+        action == "trust" || action == "remove") {
+      args = {action, address};
+    } else {
+      return {2, "{\"ok\":false,\"error\":\"unknown_bluetooth_action\"}\n"};
+    }
+  }
+
+  CommandResult result = runProgram(bluetoothCtlPath(), args);
+  const bool success = result.code == 0 &&
+                       result.output.find("Failed to") == std::string::npos &&
+                       result.output.find("not available") == std::string::npos;
+  std::ostringstream out;
+  out << "{\"ok\":" << jsonBool(success) << ",\"available\":true,";
+  out << "\"action\":\"" << jsonEscape(action) << "\",";
+  out << "\"applied\":" << jsonBool(success);
+  if (!address.empty()) {
+    out << ",\"address\":\"" << jsonEscape(address) << "\"";
+  }
+  if (!success) {
+    out << ",\"error\":\"bluetoothctl_failed\",";
+    out << "\"details\":\"" << jsonEscape(trim(result.output)) << "\"";
+  }
+  out << "}\n";
+  return {success ? 0 : 1, out.str()};
+}
+
 CommandResult bluetoothAction(const std::string &action) {
   if (action != "enable" && action != "disable") {
     return {2, "{\"ok\":false,\"error\":\"unknown_bluetooth_action\"}\n"};
@@ -1809,7 +2293,7 @@ std::string brightnessJson() {
   return out.str();
 }
 
-CommandResult brightnessSet(const std::string &percentValue) {
+CommandResult brightnessSet(const std::string &percentValue, const std::string &requestedDevice) {
   int percent = 0;
   if (!parsePercent(percentValue, &percent)) {
     return {2, "{\"ok\":false,\"error\":\"invalid_percent\"}\n"};
@@ -1820,7 +2304,13 @@ CommandResult brightnessSet(const std::string &percentValue) {
     return {0, "{\"ok\":true,\"available\":false,\"reason\":\"no_backlight\"}\n"};
   }
 
-  const std::string base = "/sys/class/backlight/" + devices[0];
+  std::string device = requestedDevice.empty() ? devices[0] : requestedDevice;
+  if (!validDeviceName(device) ||
+      std::find(devices.begin(), devices.end(), device) == devices.end()) {
+    return {2, "{\"ok\":false,\"error\":\"invalid_backlight_device\"}\n"};
+  }
+
+  const std::string base = "/sys/class/backlight/" + device;
   long long maxBrightness = 0;
   if (!parseLongLong(readTrimmed(base + "/max_brightness"), &maxBrightness) || maxBrightness <= 0) {
     return {1, "{\"ok\":false,\"available\":true,\"error\":\"invalid_max_brightness\"}\n"};
@@ -1834,7 +2324,7 @@ CommandResult brightnessSet(const std::string &percentValue) {
   const bool success = writePlainFile(base + "/brightness", std::to_string(value) + "\n");
   std::ostringstream out;
   out << "{\"ok\":" << jsonBool(success) << ",\"available\":true,\"percent\":"
-      << percent << ",\"device\":\"" << jsonEscape(devices[0]) << "\"}\n";
+      << percent << ",\"device\":\"" << jsonEscape(device) << "\"}\n";
   return {success ? 0 : 1, out.str()};
 }
 
@@ -1862,13 +2352,21 @@ int parseFirstAudioPercent(const std::string &output) {
 
 std::string audioJson() {
   const std::string amixer = findExecutable({"/usr/bin/amixer", "/bin/amixer"});
+  const std::string cards = trim(readFile("/proc/asound/cards"));
   if (amixer.empty()) {
-    return "{\"ok\":true,\"available\":false,\"reason\":\"amixer_missing\"}\n";
+    std::ostringstream out;
+    out << "{\"ok\":true,\"available\":false,\"reason\":\"amixer_missing\",";
+    out << "\"cardsText\":\"" << jsonEscape(cards) << "\"}\n";
+    return out.str();
   }
 
   CommandResult result = runProgram(amixer, {"get", "Master"});
   if (result.code != 0) {
-    return "{\"ok\":true,\"available\":false,\"reason\":\"master_control_missing\"}\n";
+    std::ostringstream out;
+    out << "{\"ok\":true,\"available\":false,\"reason\":\"master_control_missing\",";
+    out << "\"control\":\"Master\",";
+    out << "\"cardsText\":\"" << jsonEscape(cards) << "\"}\n";
+    return out.str();
   }
 
   const int percent = parseFirstAudioPercent(result.output);
@@ -1877,12 +2375,14 @@ std::string audioJson() {
   out << "{";
   out << "\"ok\":true,";
   out << "\"available\":true,";
+  out << "\"control\":\"Master\",";
   if (percent < 0) {
     out << "\"volumePercent\":null,";
   } else {
     out << "\"volumePercent\":" << percent << ",";
   }
-  out << "\"muted\":" << jsonBool(muted);
+  out << "\"muted\":" << jsonBool(muted) << ",";
+  out << "\"cardsText\":\"" << jsonEscape(cards) << "\"";
   out << "}\n";
   return out.str();
 }
@@ -1926,7 +2426,7 @@ std::string datetimeJson() {
   if (!base.empty() && base.back() == '}') {
     base.pop_back();
   }
-  base += ",\"canSet\":true,\"timezoneManaged\":false}\n";
+  base += ",\"canSet\":true,\"timezoneManaged\":true}\n";
   return base;
 }
 
@@ -1945,6 +2445,27 @@ CommandResult datetimeSet(const std::string &epochValue) {
   out << "{\"ok\":" << jsonBool(success) << ",\"epoch\":" << epoch;
   if (!success) {
     out << ",\"error\":\"settimeofday_failed\"";
+  }
+  out << "}\n";
+  return {success ? 0 : 1, out.str()};
+}
+
+CommandResult datetimeSetTimezone(const std::string &timezone) {
+  if (!validTimezoneName(timezone)) {
+    return {2, "{\"ok\":false,\"error\":\"invalid_timezone\"}\n"};
+  }
+  if (!ensureTimeStateDir()) {
+    return {1, "{\"ok\":false,\"error\":\"time_state_unavailable\"}\n"};
+  }
+  if (!writeFile(kTimeConfigPath, "timezone=" + timezone + "\n", 0600)) {
+    return {1, "{\"ok\":false,\"error\":\"timezone_write_failed\"}\n"};
+  }
+  const bool success = applyTimezone(timezone);
+  std::ostringstream out;
+  out << "{\"ok\":" << jsonBool(success) << ",\"timezone\":\""
+      << jsonEscape(timezone) << "\",\"applied\":" << jsonBool(success);
+  if (!success) {
+    out << ",\"error\":\"timezone_apply_failed\"";
   }
   out << "}\n";
   return {success ? 0 : 1, out.str()};
@@ -2416,6 +2937,11 @@ bool validateCalendarEventRecord(const CalendarEventRecord &record) {
 }
 
 bool generateDueCalendarNotifications() {
+  ScopedFileLock lock(kStateLockPath);
+  if (!lock.locked()) {
+    return false;
+  }
+
   auto events = readCalendarEvents();
   auto notifications = readNotifications();
   const long long now = nowEpoch();
@@ -2463,6 +2989,11 @@ bool generateDueCalendarNotifications() {
 std::string notificationsJson(const std::map<std::string, std::string> &filters) {
   generateDueCalendarNotifications();
 
+  ScopedFileLock lock(kStateLockPath);
+  if (!lock.locked()) {
+    return "{\"ok\":false,\"error\":\"state_lock_failed\"}\n";
+  }
+
   auto records = readNotifications();
   std::vector<NotificationRecord> filtered;
   for (const auto &record : records) {
@@ -2491,6 +3022,11 @@ std::string notificationsJson(const std::map<std::string, std::string> &filters)
 }
 
 CommandResult notificationCreate(const std::map<std::string, std::string> &options) {
+  ScopedFileLock lock(kStateLockPath);
+  if (!lock.locked()) {
+    return {1, "{\"ok\":false,\"error\":\"state_lock_failed\"}\n"};
+  }
+
   NotificationRecord record;
   const long long now = nowEpoch();
   record.id = generatedId("ntf");
@@ -2538,11 +3074,15 @@ bool updateNotificationFromOptions(NotificationRecord *record,
   const std::vector<std::string> textKeys = {
       "source", "origin", "appId", "siteUrl", "type", "status", "title", "body", "eventId", "meta"};
   for (const auto &key : textKeys) {
-    const std::string value = optionValue(options, key);
-    if (value.empty()) {
+    if (!optionPresent(options, key)) {
       continue;
     }
-    if (!validTextField(value, key == "body" || key == "meta" ? 1024 : 256, false)) {
+    const std::string value = optionValue(options, key);
+    const bool allowEmpty = key == "origin" || key == "appId" || key == "siteUrl" ||
+                            key == "body" || key == "eventId" || key == "meta";
+    const size_t maxSize = key == "body" || key == "meta" ? 1024 :
+                           (key == "title" ? 160 : 256);
+    if (!validTextField(value, maxSize, allowEmpty)) {
       return false;
     }
     if (key == "source") record->source = value;
@@ -2578,6 +3118,11 @@ CommandResult notificationUpdate(const std::string &id,
     return {2, "{\"ok\":false,\"error\":\"invalid_notification_id\"}\n"};
   }
 
+  ScopedFileLock lock(kStateLockPath);
+  if (!lock.locked()) {
+    return {1, "{\"ok\":false,\"error\":\"state_lock_failed\"}\n"};
+  }
+
   auto records = readNotifications();
   for (auto &record : records) {
     if (record.id != id) {
@@ -2606,6 +3151,11 @@ CommandResult notificationDelete(const std::string &id) {
     return {2, "{\"ok\":false,\"error\":\"invalid_notification_id\"}\n"};
   }
 
+  ScopedFileLock lock(kStateLockPath);
+  if (!lock.locked()) {
+    return {1, "{\"ok\":false,\"error\":\"state_lock_failed\"}\n"};
+  }
+
   auto records = readNotifications();
   const size_t before = records.size();
   records.erase(std::remove_if(records.begin(), records.end(),
@@ -2622,6 +3172,11 @@ CommandResult notificationDelete(const std::string &id) {
 }
 
 CommandResult notificationClear(const std::map<std::string, std::string> &filters) {
+  ScopedFileLock lock(kStateLockPath);
+  if (!lock.locked()) {
+    return {1, "{\"ok\":false,\"error\":\"state_lock_failed\"}\n"};
+  }
+
   auto records = readNotifications();
   std::vector<NotificationRecord> kept;
   size_t removed = 0;
@@ -2643,6 +3198,11 @@ CommandResult notificationClear(const std::map<std::string, std::string> &filter
 
 std::string calendarEventsJson(const std::map<std::string, std::string> &filters) {
   generateDueCalendarNotifications();
+
+  ScopedFileLock lock(kStateLockPath);
+  if (!lock.locked()) {
+    return "{\"ok\":false,\"error\":\"state_lock_failed\"}\n";
+  }
 
   const long long now = nowEpoch();
   auto records = readCalendarEvents();
@@ -2673,6 +3233,11 @@ std::string calendarEventsJson(const std::map<std::string, std::string> &filters
 }
 
 CommandResult calendarEventCreate(const std::map<std::string, std::string> &options) {
+  ScopedFileLock lock(kStateLockPath);
+  if (!lock.locked()) {
+    return {1, "{\"ok\":false,\"error\":\"state_lock_failed\"}\n"};
+  }
+
   CalendarEventRecord record;
   const long long now = nowEpoch();
   record.id = generatedId("evt");
@@ -2736,11 +3301,14 @@ bool updateCalendarEventFromOptions(CalendarEventRecord *record,
   const std::vector<std::string> textKeys = {
       "source", "origin", "type", "status", "title", "description", "meta"};
   for (const auto &key : textKeys) {
-    const std::string value = optionValue(options, key);
-    if (value.empty()) {
+    if (!optionPresent(options, key)) {
       continue;
     }
-    if (!validTextField(value, key == "description" || key == "meta" ? 2048 : 256, false)) {
+    const std::string value = optionValue(options, key);
+    const bool allowEmpty = key == "origin" || key == "description" || key == "meta";
+    const size_t maxSize = key == "description" || key == "meta" ? 2048 :
+                           (key == "title" ? 160 : 256);
+    if (!validTextField(value, maxSize, allowEmpty)) {
       return false;
     }
     if (key == "source") record->source = value;
@@ -2763,6 +3331,11 @@ CommandResult calendarEventUpdate(const std::string &id,
                                   const std::map<std::string, std::string> &options) {
   if (!validRecordId(id)) {
     return {2, "{\"ok\":false,\"error\":\"invalid_event_id\"}\n"};
+  }
+
+  ScopedFileLock lock(kStateLockPath);
+  if (!lock.locked()) {
+    return {1, "{\"ok\":false,\"error\":\"state_lock_failed\"}\n"};
   }
 
   auto records = readCalendarEvents();
@@ -2794,6 +3367,11 @@ CommandResult calendarEventDelete(const std::string &id) {
     return {2, "{\"ok\":false,\"error\":\"invalid_event_id\"}\n"};
   }
 
+  ScopedFileLock lock(kStateLockPath);
+  if (!lock.locked()) {
+    return {1, "{\"ok\":false,\"error\":\"state_lock_failed\"}\n"};
+  }
+
   auto records = readCalendarEvents();
   const size_t before = records.size();
   records.erase(std::remove_if(records.begin(), records.end(),
@@ -2810,6 +3388,11 @@ CommandResult calendarEventDelete(const std::string &id) {
 }
 
 CommandResult calendarEventClear(const std::map<std::string, std::string> &filters) {
+  ScopedFileLock lock(kStateLockPath);
+  if (!lock.locked()) {
+    return {1, "{\"ok\":false,\"error\":\"state_lock_failed\"}\n"};
+  }
+
   const long long now = nowEpoch();
   auto records = readCalendarEvents();
   std::vector<CalendarEventRecord> kept;
@@ -3022,6 +3605,14 @@ CommandResult handleCommand(const std::vector<std::string> &parts) {
     return {0, bluetoothJson()};
   }
 
+  if (command == "bluetooth-devices-json") {
+    if (!hasPermission(policy, "status.read")) {
+      return {1, tr("permission.denied") + "status.read\n"};
+    }
+
+    return {0, bluetoothDevicesJson()};
+  }
+
   if (command == "bluetooth") {
     if (parts.size() < 2) {
       return {2, "{\"ok\":false,\"error\":\"missing_bluetooth_action\"}\n"};
@@ -3029,7 +3620,11 @@ CommandResult handleCommand(const std::vector<std::string> &parts) {
     if (!hasPermission(policy, "system.bluetooth")) {
       return {1, tr("permission.denied") + "system.bluetooth\n"};
     }
-    return bluetoothAction(parts[1]);
+    if (parts[1] == "enable" || parts[1] == "disable") {
+      return bluetoothAction(parts[1]);
+    }
+    auto options = parseOptions(parts, 2);
+    return bluetoothDeviceAction(parts[1], optionValue(options, "address"));
   }
 
   if (command == "brightness-json") {
@@ -3047,7 +3642,8 @@ CommandResult handleCommand(const std::vector<std::string> &parts) {
     if (!hasPermission(policy, "system.brightness")) {
       return {1, tr("permission.denied") + "system.brightness\n"};
     }
-    return brightnessSet(parts[2]);
+    auto options = parseOptions(parts, 3);
+    return brightnessSet(parts[2], optionValue(options, "device"));
   }
 
   if (command == "audio-json") {
@@ -3078,13 +3674,20 @@ CommandResult handleCommand(const std::vector<std::string> &parts) {
   }
 
   if (command == "datetime") {
-    if (parts.size() < 3 || parts[1] != "set") {
+    if (parts.size() < 2) {
       return {2, "{\"ok\":false,\"error\":\"invalid_datetime_command\"}\n"};
     }
     if (!hasPermission(policy, "system.datetime")) {
       return {1, tr("permission.denied") + "system.datetime\n"};
     }
-    return datetimeSet(parts[2]);
+    if (parts[1] == "set" && parts.size() >= 3) {
+      return datetimeSet(parts[2]);
+    }
+    if (parts[1] == "timezone") {
+      auto options = parseOptions(parts, 2);
+      return datetimeSetTimezone(optionValue(options, "timezone"));
+    }
+    return {2, "{\"ok\":false,\"error\":\"invalid_datetime_command\"}\n"};
   }
 
   if (command == "notifications-json") {
@@ -3595,6 +4198,38 @@ void writePidFile() {
   file << getpid() << "\n";
 }
 
+void applySavedRuntimeState() {
+  (void)applySavedTimezone();
+
+  auto networkConfig = parseKeyValueFile(kNetworkConfigPath);
+  if (!networkConfig.empty()) {
+    CommandResult result = applyNetworkConfig(networkConfig);
+    logConsole("network reapply exit=" + std::to_string(result.code));
+  }
+
+  auto wifiConfig = parseKeyValueFile(kWifiConfigPath);
+  if (!wifiConfig.empty()) {
+    CommandResult result = applyWifiConfig(wifiConfig);
+    logConsole("wifi reapply exit=" + std::to_string(result.code));
+  }
+}
+
+void startCalendarNotificationScheduler() {
+  pid_t pid = fork();
+  if (pid < 0) {
+    logConsole("failed to fork notification scheduler: " + std::string(strerror(errno)));
+    return;
+  }
+
+  if (pid == 0) {
+    signal(SIGCHLD, SIG_DFL);
+    while (true) {
+      (void)generateDueCalendarNotifications();
+      sleep(1);
+    }
+  }
+}
+
 void prepareRuntimeDir() {
   unlink(kRequestFifo);
   unlink(kControlSocket);
@@ -3619,6 +4254,8 @@ void prepareRuntimeDir() {
 
 void runDaemon() {
   prepareRuntimeDir();
+  applySavedRuntimeState();
+  startCalendarNotificationScheduler();
   logConsole("started pid=" + std::to_string(getpid()) + " mode=c++");
 
   while (true) {

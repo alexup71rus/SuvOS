@@ -154,7 +154,8 @@ chmod +x "$ROOTFS/bin/busybox"
 for applet in sh ash ls mkdir rmdir pwd cat echo printf touch rm cp mv chmod chown \
   grep sed awk head tail find date clear mount umount dmesg sleep uname reboot \
   poweroff halt id whoami env true false test '[' basename dirname ps kill sync \
-  mkfifo cut tail sort tee ifconfig wget insmod lsmod rmmod readlink; do
+  mkfifo cut tail sort tee ifconfig route udhcpc ip killall pidof wget insmod lsmod \
+  rmmod readlink; do
   ln -sf busybox "$ROOTFS/bin/$applet"
 done
 ln -sf /bin/env "$ROOTFS/usr/bin/env"
@@ -176,6 +177,8 @@ cp -R "$ROOT_DIR/build/ui/." "$ROOTFS/system/suvos/ui/"
 rm -f "$ROOTFS/system/suvos/ui/.suvos-ui-bundle.sha256"
 cp -R "$ROOT_DIR/build/kernel/graphics-modules-$ARCH" "$ROOTFS/system/suvos/modules/graphics"
 cp "$ROOT_DIR/build/kernel/graphics-modules-$ARCH.order" "$ROOTFS/system/suvos/modules/graphics.order"
+cp -R "$ROOT_DIR/build/kernel/network-modules-$ARCH" "$ROOTFS/system/suvos/modules/network"
+cp "$ROOT_DIR/build/kernel/network-modules-$ARCH.order" "$ROOTFS/system/suvos/modules/network.order"
 chmod +x "$ROOTFS/system/suvos/bin/suvosd" \
   "$ROOTFS/system/suvos/bin/suvosctl" \
   "$ROOTFS/system/suvos/bin/suvos-gateway" \

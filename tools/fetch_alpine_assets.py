@@ -24,14 +24,18 @@ REPO = f"https://dl-cdn.alpinelinux.org/alpine/{ALPINE_RELEASE}/main/{ARCH}"
 ROOT = Path(__file__).resolve().parents[1]
 CACHE = ROOT / "build" / "cache"
 ASSETS = ROOT / "build" / "assets"
-ASSET_SCHEMA = "7"
+ASSET_SCHEMA = "9"
 KERNEL_OUT = ROOT / "build" / "kernel" / f"vmlinuz-{ARCH}"
 GRAPHICS_MODULES_OUT = ROOT / "build" / "kernel" / f"graphics-modules-{ARCH}"
 GRAPHICS_MODULES_ORDER_OUT = ROOT / "build" / "kernel" / f"graphics-modules-{ARCH}.order"
+NETWORK_MODULES_OUT = ROOT / "build" / "kernel" / f"network-modules-{ARCH}"
+NETWORK_MODULES_ORDER_OUT = ROOT / "build" / "kernel" / f"network-modules-{ARCH}.order"
 BUSYBOX_OUT = ASSETS / f"busybox-{ARCH}"
 MANIFEST_OUT = ASSETS / f"alpine-packages-{ARCH}.txt"
 LEGACY_GRAPHICS_MODULES_OUT = ROOT / "build" / "kernel" / "graphics-modules"
 LEGACY_GRAPHICS_MODULES_ORDER_OUT = ROOT / "build" / "kernel" / "graphics-modules.order"
+LEGACY_NETWORK_MODULES_OUT = ROOT / "build" / "kernel" / "network-modules"
+LEGACY_NETWORK_MODULES_ORDER_OUT = ROOT / "build" / "kernel" / "network-modules.order"
 LEGACY_MANIFEST_OUT = ASSETS / "alpine-packages.txt"
 REFRESH_ASSETS = os.environ.get("SUVOS_REFRESH_ASSETS", "0") == "1"
 GRAPHICS_MODULE_TARGETS = [
@@ -51,6 +55,12 @@ GRAPHICS_MODULE_TARGETS = [
   "kernel/sound/pci/hda/snd-hda-codec-generic.ko.gz",
   "kernel/sound/pci/snd-ens1371.ko.gz",
   "kernel/sound/virtio/virtio_snd.ko.gz",
+]
+NETWORK_MODULE_TARGETS = [
+  "kernel/net/packet/af_packet.ko.gz",
+  "kernel/drivers/net/ethernet/intel/e1000/e1000.ko.gz",
+  "kernel/drivers/net/ethernet/intel/e1000e/e1000e.ko.gz",
+  "kernel/drivers/net/virtio_net.ko.gz",
 ]
 
 
@@ -164,12 +174,12 @@ def collect_module_order(deps: dict[str, list[str]], targets: list[str]) -> list
   return order
 
 
-def extract_graphics_modules(package_path: Path) -> None:
+def extract_modules(package_path: Path, targets: list[str], out_dir: Path, order_path: Path) -> None:
   modules_root, deps = read_modules_dep(package_path)
-  order = collect_module_order(deps, GRAPHICS_MODULE_TARGETS)
+  order = collect_module_order(deps, targets)
 
-  shutil.rmtree(GRAPHICS_MODULES_OUT, ignore_errors=True)
-  GRAPHICS_MODULES_OUT.mkdir(parents=True, exist_ok=True)
+  shutil.rmtree(out_dir, ignore_errors=True)
+  out_dir.mkdir(parents=True, exist_ok=True)
   for module in order:
     module_bytes = read_package_member(package_path, f"{modules_root}{module}")
     if module.endswith(".gz"):
@@ -178,27 +188,35 @@ def extract_graphics_modules(package_path: Path) -> None:
     else:
       out_rel = module
 
-    out_path = GRAPHICS_MODULES_OUT / out_rel
+    out_path = out_dir / out_rel
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_bytes(module_bytes)
     out_path.chmod(0o644)
 
-  GRAPHICS_MODULES_ORDER_OUT.parent.mkdir(parents=True, exist_ok=True)
-  GRAPHICS_MODULES_ORDER_OUT.write_text(
+  order_path.parent.mkdir(parents=True, exist_ok=True)
+  order_path.write_text(
     "\n".join(module[:-3] if module.endswith(".gz") else module for module in order) + "\n",
     encoding="utf-8",
   )
+
+
+def extract_graphics_modules(package_path: Path) -> None:
+  extract_modules(package_path, GRAPHICS_MODULE_TARGETS, GRAPHICS_MODULES_OUT, GRAPHICS_MODULES_ORDER_OUT)
+
+
+def extract_network_modules(package_path: Path) -> None:
+  extract_modules(package_path, NETWORK_MODULE_TARGETS, NETWORK_MODULES_OUT, NETWORK_MODULES_ORDER_OUT)
 
 
 def file_ready(path: Path) -> bool:
   return path.exists() and path.stat().st_size > 0
 
 
-def graphics_modules_ready() -> bool:
-  if not file_ready(GRAPHICS_MODULES_ORDER_OUT):
+def modules_ready(out_dir: Path, order_path: Path) -> bool:
+  if not file_ready(order_path):
     return False
-  for line in GRAPHICS_MODULES_ORDER_OUT.read_text(encoding="utf-8").splitlines():
-    if line and not file_ready(GRAPHICS_MODULES_OUT / line):
+  for line in order_path.read_text(encoding="utf-8").splitlines():
+    if line and not file_ready(out_dir / line):
       return False
   return True
 
@@ -217,7 +235,8 @@ def assets_ready() -> bool:
     fields.get("schema") == ASSET_SCHEMA
     and fields.get("arch") == ARCH
     and fields.get("release") == ALPINE_RELEASE
-    and graphics_modules_ready()
+    and modules_ready(GRAPHICS_MODULES_OUT, GRAPHICS_MODULES_ORDER_OUT)
+    and modules_ready(NETWORK_MODULES_OUT, NETWORK_MODULES_ORDER_OUT)
   )
 
 
@@ -228,6 +247,8 @@ def update_legacy_x86_links() -> None:
   for legacy, current in [
     (LEGACY_GRAPHICS_MODULES_OUT, GRAPHICS_MODULES_OUT),
     (LEGACY_GRAPHICS_MODULES_ORDER_OUT, GRAPHICS_MODULES_ORDER_OUT),
+    (LEGACY_NETWORK_MODULES_OUT, NETWORK_MODULES_OUT),
+    (LEGACY_NETWORK_MODULES_ORDER_OUT, NETWORK_MODULES_ORDER_OUT),
     (LEGACY_MANIFEST_OUT, MANIFEST_OUT),
   ]:
     if legacy == current:
@@ -250,6 +271,7 @@ def main() -> None:
     print(f"kernel: {KERNEL_OUT}")
     print(f"busybox: {BUSYBOX_OUT}")
     print(f"graphics-modules: {GRAPHICS_MODULES_OUT}")
+    print(f"network-modules: {NETWORK_MODULES_OUT}")
     print(f"manifest: {MANIFEST_OUT}")
     return
 
@@ -264,6 +286,7 @@ def main() -> None:
   extract_member(linux_virt, "boot/vmlinuz-virt", KERNEL_OUT)
   extract_member(busybox_static, "bin/busybox.static", BUSYBOX_OUT)
   extract_graphics_modules(linux_virt)
+  extract_network_modules(linux_virt)
 
   lines = [
     f"schema={ASSET_SCHEMA}",
@@ -273,6 +296,7 @@ def main() -> None:
     f"linux-virt={packages['linux-virt']['V']}",
     f"busybox-static={packages['busybox-static']['V']}",
     f"graphics-modules={len(GRAPHICS_MODULES_ORDER_OUT.read_text(encoding='utf-8').splitlines())}",
+    f"network-modules={len(NETWORK_MODULES_ORDER_OUT.read_text(encoding='utf-8').splitlines())}",
   ]
   MANIFEST_OUT.write_text("\n".join(lines) + "\n", encoding="utf-8")
   update_legacy_x86_links()
@@ -280,6 +304,7 @@ def main() -> None:
   print(f"kernel: {KERNEL_OUT}")
   print(f"busybox: {BUSYBOX_OUT}")
   print(f"graphics-modules: {GRAPHICS_MODULES_OUT}")
+  print(f"network-modules: {NETWORK_MODULES_OUT}")
   print(f"manifest: {MANIFEST_OUT}")
 
 

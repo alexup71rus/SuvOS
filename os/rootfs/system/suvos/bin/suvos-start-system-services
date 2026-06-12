@@ -1,0 +1,87 @@
+#!/bin/sh
+
+set -u
+
+PATH=/system/suvos/bin:/opt/suvos/bin:/bin:/sbin:/usr/bin:/usr/sbin
+export PATH
+
+start_udev() {
+  udevd_bin=""
+  for candidate in /sbin/udevd /usr/sbin/udevd udevd; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      udevd_bin="$(command -v "$candidate")"
+      break
+    fi
+  done
+
+  if [ -z "$udevd_bin" ]; then
+    echo "suvos-system: udev unavailable"
+    return 0
+  fi
+
+  mkdir -p /run/udev
+  if ! pgrep udevd >/dev/null 2>&1 && ! pidof udevd >/dev/null 2>&1; then
+    "$udevd_bin" --daemon >/tmp/suvos-udevd.log 2>&1 || {
+      echo "suvos-system: udevd start failed"
+      cat /tmp/suvos-udevd.log 2>/dev/null || true
+      return 0
+    }
+  fi
+
+  if command -v udevadm >/dev/null 2>&1; then
+    udevadm trigger --action=add >/tmp/suvos-udevadm-trigger.log 2>&1 || \
+      cat /tmp/suvos-udevadm-trigger.log 2>/dev/null || true
+    udevadm settle --timeout=5 >/tmp/suvos-udevadm-settle.log 2>&1 || \
+      cat /tmp/suvos-udevadm-settle.log 2>/dev/null || true
+  fi
+
+  echo "suvos-system: udev ready"
+}
+
+start_dbus() {
+  if ! command -v dbus-daemon >/dev/null 2>&1; then
+    echo "suvos-system: dbus unavailable"
+    return 0
+  fi
+
+  if command -v dbus-uuidgen >/dev/null 2>&1; then
+    dbus-uuidgen --ensure=/etc/machine-id 2>/tmp/suvos-machine-id.err || \
+      cat /tmp/suvos-machine-id.err 2>/dev/null || true
+  fi
+
+  mkdir -p /run/dbus
+  if [ ! -S /run/dbus/system_bus_socket ]; then
+    dbus-daemon --system --fork >/tmp/suvos-dbus-system.log 2>&1 && \
+      echo "suvos-system: dbus system bus ready" || {
+        echo "suvos-system: dbus system bus start failed"
+        cat /tmp/suvos-dbus-system.log 2>/dev/null || true
+      }
+  else
+    echo "suvos-system: dbus system bus already running"
+  fi
+}
+
+start_bluetoothd() {
+  if ! command -v bluetoothd >/dev/null 2>&1; then
+    echo "suvos-system: bluetoothd unavailable"
+    return 0
+  fi
+
+  if pgrep bluetoothd >/dev/null 2>&1 || pidof bluetoothd >/dev/null 2>&1; then
+    echo "suvos-system: bluetoothd already running"
+    return 0
+  fi
+
+  bluetoothd >/tmp/suvos-bluetoothd.log 2>&1 &
+  sleep 1
+  if pgrep bluetoothd >/dev/null 2>&1 || pidof bluetoothd >/dev/null 2>&1; then
+    echo "suvos-system: bluetoothd ready"
+  else
+    echo "suvos-system: bluetoothd start failed"
+    cat /tmp/suvos-bluetoothd.log 2>/dev/null || true
+  fi
+}
+
+start_udev
+start_dbus
+start_bluetoothd

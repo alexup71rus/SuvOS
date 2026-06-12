@@ -118,7 +118,7 @@ bool pathReadable(const std::string &path) {
 }
 
 bool validPart(const std::string &value) {
-  if (value.empty() || value.size() > 128) {
+  if (value.empty() || value.size() > kMaxSuvosdRequestPartBytes) {
     return false;
   }
   for (unsigned char ch : value) {

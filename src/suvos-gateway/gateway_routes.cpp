@@ -133,6 +133,28 @@ std::string queryValue(const std::map<std::string, std::string> &queryValues,
   return item == queryValues.end() ? "" : item->second;
 }
 
+std::string requestBody(const std::string &request) {
+  size_t separatorSize = 0;
+  const size_t headerEnd = httpHeaderEnd(request, &separatorSize);
+  if (headerEnd == std::string::npos) {
+    return "";
+  }
+  return request.substr(headerEnd + separatorSize);
+}
+
+std::map<std::string, std::string> requestValues(const std::string &query,
+                                                 const std::string &request) {
+  auto values = parseQuery(query);
+  const std::string body = requestBody(request);
+  if (!body.empty()) {
+    auto bodyValues = parseQuery(body);
+    for (const auto &item : bodyValues) {
+      values[item.first] = item.second;
+    }
+  }
+  return values;
+}
+
 std::vector<std::string> commandWithOptionalValue(const std::vector<std::string> &base,
                                                   const std::string &value) {
   std::vector<std::string> parts = base;
@@ -148,6 +170,15 @@ void appendQueryOption(std::vector<std::string> *parts,
   const std::string value = queryValue(queryValues, key);
   if (!value.empty()) {
     parts->push_back(key + "=" + value);
+  }
+}
+
+void appendPresentOption(std::vector<std::string> *parts,
+                         const std::map<std::string, std::string> &queryValues,
+                         const std::string &key) {
+  auto item = queryValues.find(key);
+  if (item != queryValues.end()) {
+    parts->push_back(key + "=" + item->second);
   }
 }
 
@@ -197,6 +228,7 @@ bool handleSystemRoute(int fd,
     appendQueryOption(&parts, queryValues, "mode");
     appendQueryOption(&parts, queryValues, "interface");
     appendQueryOption(&parts, queryValues, "address");
+    appendQueryOption(&parts, queryValues, "netmask");
     appendQueryOption(&parts, queryValues, "gateway");
     appendQueryOption(&parts, queryValues, "dns");
     proxyJsonCommand(fd, parts);
@@ -251,6 +283,7 @@ bool handleSystemRoute(int fd,
     }
     std::vector<std::string> parts = {"wifi", "connect", "ssid=" + ssid};
     appendQueryOption(&parts, queryValues, "psk");
+    appendQueryOption(&parts, queryValues, "interface");
     proxyJsonCommand(fd, parts);
     return true;
   }
@@ -290,13 +323,23 @@ bool handleSystemRoute(int fd,
     return true;
   }
 
+  if (path == "/api/system/bluetooth/devices") {
+    if (!requireMethod(fd, method, "GET")) {
+      return true;
+    }
+    proxyJsonCommand(fd, {"bluetooth-devices-json"});
+    return true;
+  }
+
   constexpr const char *kBluetoothPrefix = "/api/system/bluetooth/";
   if (path.rfind(kBluetoothPrefix, 0) == 0) {
     if (!requireMethod(fd, method, "POST")) {
       return true;
     }
     const std::string action = path.substr(std::strlen(kBluetoothPrefix));
-    proxyJsonCommand(fd, {"bluetooth", action});
+    std::vector<std::string> parts = {"bluetooth", action};
+    appendQueryOption(&parts, queryValues, "address");
+    proxyJsonCommand(fd, parts);
     return true;
   }
 
@@ -317,7 +360,9 @@ bool handleSystemRoute(int fd,
       sendJson(fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_percent\"}\n");
       return true;
     }
-    proxyJsonCommand(fd, {"brightness", "set", percent});
+    std::vector<std::string> parts = {"brightness", "set", percent};
+    appendQueryOption(&parts, queryValues, "device");
+    proxyJsonCommand(fd, parts);
     return true;
   }
 
@@ -369,6 +414,19 @@ bool handleSystemRoute(int fd,
     return true;
   }
 
+  if (path == "/api/system/datetime/timezone") {
+    if (!requireMethod(fd, method, "POST")) {
+      return true;
+    }
+    const std::string timezone = queryValue(queryValues, "timezone");
+    if (timezone.empty()) {
+      sendJson(fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_timezone\"}\n");
+      return true;
+    }
+    proxyJsonCommand(fd, {"datetime", "timezone", "timezone=" + timezone});
+    return true;
+  }
+
   return false;
 }
 
@@ -404,14 +462,18 @@ bool handleNotificationRoute(int fd,
   const std::string action = path.substr(std::strlen(kPrefix));
   if (action == "create") {
     std::vector<std::string> parts = {"notification", "create"};
-    appendQueryOptions(&parts, queryValues, recordKeys);
+    for (const auto &key : recordKeys) {
+      appendPresentOption(&parts, queryValues, key);
+    }
     proxyJsonCommand(fd, parts);
     return true;
   }
   if (action == "update") {
     std::vector<std::string> parts = {"notification", "update"};
     appendQueryOption(&parts, queryValues, "id");
-    appendQueryOptions(&parts, queryValues, recordKeys);
+    for (const auto &key : recordKeys) {
+      appendPresentOption(&parts, queryValues, key);
+    }
     proxyJsonCommand(fd, parts);
     return true;
   }
@@ -463,14 +525,18 @@ bool handleCalendarRoute(int fd,
   const std::string action = path.substr(std::strlen(kPrefix));
   if (action == "create") {
     std::vector<std::string> parts = {"calendar", "create"};
-    appendQueryOptions(&parts, queryValues, recordKeys);
+    for (const auto &key : recordKeys) {
+      appendPresentOption(&parts, queryValues, key);
+    }
     proxyJsonCommand(fd, parts);
     return true;
   }
   if (action == "update") {
     std::vector<std::string> parts = {"calendar", "update"};
     appendQueryOption(&parts, queryValues, "id");
-    appendQueryOptions(&parts, queryValues, recordKeys);
+    for (const auto &key : recordKeys) {
+      appendPresentOption(&parts, queryValues, key);
+    }
     proxyJsonCommand(fd, parts);
     return true;
   }
@@ -514,7 +580,7 @@ void handleClient(int fd) {
   size_t queryStart = target.find('?');
   std::string path = target.substr(0, queryStart);
   std::string query = queryStart == std::string::npos ? "" : target.substr(queryStart + 1);
-  auto queryValues = parseQuery(query);
+  auto queryValues = requestValues(query, request);
 
   if (path == "/api/aec/status") {
     sendJson(fd, 200, "OK", aecStatusJson());

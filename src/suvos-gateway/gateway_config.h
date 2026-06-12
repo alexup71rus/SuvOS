@@ -17,6 +17,7 @@ constexpr int kAecPort = 3030;
 constexpr const char *kExitPrefix = "__SUVOSD_EXIT__:";
 constexpr std::size_t kMaxHttpRequestBytes = 4 * 1024 * 1024;
 constexpr std::size_t kMaxSuvosdResponseBytes = 1024 * 1024;
+constexpr std::size_t kMaxSuvosdRequestPartBytes = 2048;
 
 }  // namespace suvos_gateway
 

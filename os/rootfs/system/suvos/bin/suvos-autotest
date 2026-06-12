@@ -21,6 +21,19 @@ cmdline_value() {
   return 0
 }
 
+fetch_or_die() {
+  output="$1"
+  shift
+  if wget -q -O "$output" "$@"; then
+    return 0
+  fi
+
+  status="$?"
+  echo "request failed: $*"
+  cat "$output" 2>/dev/null || true
+  exit "$status"
+}
+
 echo "SUVOS_AUTOTEST_BEGIN"
 echo "profile=$SUVOS_BUILD_PROFILE"
 echo "pwd=$(pwd)"
@@ -32,6 +45,10 @@ suvos auth status
 test -r /system/suvos/modules/graphics.order
 test -r /system/suvos/modules/graphics/kernel/drivers/gpu/drm/tiny/bochs.ko || \
   test -r /system/suvos/modules/graphics/kernel/drivers/gpu/drm/virtio/virtio-gpu.ko
+test -r /system/suvos/modules/network.order
+test -r /system/suvos/modules/network/kernel/net/packet/af_packet.ko
+test -r /system/suvos/modules/network/kernel/drivers/net/ethernet/intel/e1000/e1000.ko || \
+  test -r /system/suvos/modules/network/kernel/drivers/net/virtio_net.ko
 suvos-splash --check
 test -s /system/suvos/security/root-bootstrap.sha256
 test -d /system/suvos/apps/manifest.d
@@ -70,10 +87,27 @@ grep -q '"interfaces":' /tmp/suvos-http-system-network.out
 wget -q -O /tmp/suvos-http-system-network-config.out http://suv.os/api/system/network/config
 cat /tmp/suvos-http-system-network-config.out
 grep -q '"ok":true' /tmp/suvos-http-system-network-config.out
-wget -q -O /tmp/suvos-http-system-network-configure.out --post-data='' 'http://suv.os/api/system/network/configure?mode=dhcp'
+fetch_or_die /tmp/suvos-http-system-network-configure.out --post-data='' 'http://suv.os/api/system/network/configure?mode=dhcp'
 cat /tmp/suvos-http-system-network-configure.out
 grep -q '"ok":true' /tmp/suvos-http-system-network-configure.out
 grep -q '"configured":true' /tmp/suvos-http-system-network-configure.out
+if [ "$(cmdline_value suvos.autotest_network)" = "1" ]; then
+  network_iface=""
+  for candidate in /sys/class/net/*; do
+    network_iface="${candidate##*/}"
+    [ "$network_iface" = "lo" ] && continue
+    break
+  done
+  test -n "$network_iface"
+  test "$network_iface" != "lo"
+  fetch_or_die /tmp/suvos-http-system-network-dhcp.out --post-data='' "http://suv.os/api/system/network/configure?mode=dhcp&interface=$network_iface"
+  cat /tmp/suvos-http-system-network-dhcp.out
+  grep -q '"ok":true' /tmp/suvos-http-system-network-dhcp.out
+  grep -q '"applied":true' /tmp/suvos-http-system-network-dhcp.out
+  wget -q -O /tmp/suvos-http-system-network-online.out http://suv.os/api/system/network
+  cat /tmp/suvos-http-system-network-online.out
+  grep -q '"online":true' /tmp/suvos-http-system-network-online.out
+fi
 wget -q -O /tmp/suvos-http-system-wifi.out http://suv.os/api/system/wifi
 cat /tmp/suvos-http-system-wifi.out
 grep -q '"ok":true' /tmp/suvos-http-system-wifi.out
@@ -103,6 +137,10 @@ grep -q '"supplies":' /tmp/suvos-http-system-battery.out
 wget -q -O /tmp/suvos-http-system-bluetooth.out http://suv.os/api/system/bluetooth
 cat /tmp/suvos-http-system-bluetooth.out
 grep -q '"ok":true' /tmp/suvos-http-system-bluetooth.out
+wget -q -O /tmp/suvos-http-system-bluetooth-devices.out http://suv.os/api/system/bluetooth/devices
+cat /tmp/suvos-http-system-bluetooth-devices.out
+grep -q '"ok":true' /tmp/suvos-http-system-bluetooth-devices.out
+grep -q '"devices":' /tmp/suvos-http-system-bluetooth-devices.out
 wget -q -O /tmp/suvos-http-system-brightness.out http://suv.os/api/system/brightness
 cat /tmp/suvos-http-system-brightness.out
 grep -q '"ok":true' /tmp/suvos-http-system-brightness.out
@@ -113,6 +151,7 @@ wget -q -O /tmp/suvos-http-system-datetime.out http://suv.os/api/system/datetime
 cat /tmp/suvos-http-system-datetime.out
 grep -q '"ok":true' /tmp/suvos-http-system-datetime.out
 grep -q '"canSet":true' /tmp/suvos-http-system-datetime.out
+grep -q '"timezoneManaged":true' /tmp/suvos-http-system-datetime.out
 wget -q -O /tmp/suvos-http-system-network-enable.out --post-data='' http://suv.os/api/system/network/enable
 cat /tmp/suvos-http-system-network-enable.out
 grep -q '"ok":true' /tmp/suvos-http-system-network-enable.out
@@ -122,6 +161,9 @@ grep -q '"ok":true' /tmp/suvos-http-system-wifi-enable.out
 wget -q -O /tmp/suvos-http-system-bluetooth-enable.out --post-data='' http://suv.os/api/system/bluetooth/enable
 cat /tmp/suvos-http-system-bluetooth-enable.out
 grep -q '"ok":true' /tmp/suvos-http-system-bluetooth-enable.out
+wget -q -O /tmp/suvos-http-system-bluetooth-scan.out --post-data='' http://suv.os/api/system/bluetooth/scan
+cat /tmp/suvos-http-system-bluetooth-scan.out
+grep -q '"ok":true' /tmp/suvos-http-system-bluetooth-scan.out
 wget -q -O /tmp/suvos-http-system-brightness-set.out --post-data='' 'http://suv.os/api/system/brightness/set?percent=50'
 cat /tmp/suvos-http-system-brightness-set.out
 grep -q '"ok":true' /tmp/suvos-http-system-brightness-set.out
@@ -129,6 +171,13 @@ if wget -q -O /tmp/suvos-http-system-datetime-invalid.out --post-data='' 'http:/
   echo "invalid datetime epoch was accepted"
   exit 1
 fi
+wget -q -O /tmp/suvos-http-system-timezone.out --post-data='' 'http://suv.os/api/system/datetime/timezone?timezone=UTC'
+cat /tmp/suvos-http-system-timezone.out
+grep -q '"ok":true' /tmp/suvos-http-system-timezone.out
+grep -q '"applied":true' /tmp/suvos-http-system-timezone.out
+wget -q -O /tmp/suvos-http-system-datetime-utc.out http://suv.os/api/system/datetime
+cat /tmp/suvos-http-system-datetime-utc.out
+grep -q '"configuredTimezone":"UTC"' /tmp/suvos-http-system-datetime-utc.out
 wget -q -O /tmp/suvos-http-notifications-clear-start.out --post-data='' http://suv.os/api/notifications/clear
 cat /tmp/suvos-http-notifications-clear-start.out
 grep -q '"ok":true' /tmp/suvos-http-notifications-clear-start.out
@@ -154,6 +203,10 @@ wget -q -O /tmp/suvos-http-notification-update.out --post-data='' "http://suv.os
 cat /tmp/suvos-http-notification-update.out
 grep -q '"ok":true' /tmp/suvos-http-notification-update.out
 grep -q '"body":"UpdatedBody"' /tmp/suvos-http-notification-update.out
+wget -q -O /tmp/suvos-http-notification-clear-body.out --post-data="id=$notification_id&body=" http://suv.os/api/notifications/update
+cat /tmp/suvos-http-notification-clear-body.out
+grep -q '"ok":true' /tmp/suvos-http-notification-clear-body.out
+grep -q '"body":""' /tmp/suvos-http-notification-clear-body.out
 wget -q -O /tmp/suvos-http-notification-read.out --post-data='' "http://suv.os/api/notifications/read?id=$notification_id"
 cat /tmp/suvos-http-notification-read.out
 grep -q '"ok":true' /tmp/suvos-http-notification-read.out
@@ -208,6 +261,30 @@ grep -q '"ok":true' /tmp/suvos-http-notifications-clear-calendar.out
 wget -q -O /tmp/suvos-http-notifications-empty.out 'http://suv.os/api/notifications?source=calendar'
 cat /tmp/suvos-http-notifications-empty.out
 grep -q '"count":0' /tmp/suvos-http-notifications-empty.out
+long_body="abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz"
+wget -q -O /tmp/suvos-http-notification-form.out --post-data="source=site&origin=example.test&type=info&title=FormNotice&body=$long_body" http://suv.os/api/notifications/create
+cat /tmp/suvos-http-notification-form.out
+grep -q '"ok":true' /tmp/suvos-http-notification-form.out
+grep -q '"title":"FormNotice"' /tmp/suvos-http-notification-form.out
+grep -q "$long_body" /tmp/suvos-http-notification-form.out
+future_epoch=$(($(date +%s) + 2))
+wget -q -O /tmp/suvos-http-calendar-future.out --post-data="source=calendar&origin=suvos.calendar&type=goal&title=FutureGoal&description=WakeLater&startEpoch=$future_epoch&endEpoch=$future_epoch" http://suv.os/api/calendar/events/create
+cat /tmp/suvos-http-calendar-future.out
+grep -q '"ok":true' /tmp/suvos-http-calendar-future.out
+future_event_id="$(sed -n 's/.*"id":"\([^"]*\)".*/\1/p' /tmp/suvos-http-calendar-future.out)"
+test -n "$future_event_id"
+sleep 4
+grep -q 'FutureGoal' /data/suvos/notifications/notifications.tsv
+wget -q -O /tmp/suvos-http-calendar-future-notification.out 'http://suv.os/api/notifications?source=calendar&type=goal&status=unread'
+cat /tmp/suvos-http-calendar-future-notification.out
+grep -q '"title":"FutureGoal"' /tmp/suvos-http-calendar-future-notification.out
+grep -q "\"eventId\":\"$future_event_id\"" /tmp/suvos-http-calendar-future-notification.out
+wget -q -O /tmp/suvos-http-calendar-future-delete.out --post-data='' "http://suv.os/api/calendar/events/delete?id=$future_event_id"
+cat /tmp/suvos-http-calendar-future-delete.out
+grep -q '"ok":true' /tmp/suvos-http-calendar-future-delete.out
+wget -q -O /tmp/suvos-http-notifications-clear-end.out --post-data='' http://suv.os/api/notifications/clear
+cat /tmp/suvos-http-notifications-clear-end.out
+grep -q '"ok":true' /tmp/suvos-http-notifications-clear-end.out
 wget -q -O /tmp/suvos-http-roles.out http://suv.os/api/roles
 cat /tmp/suvos-http-roles.out
 grep -q '"currentRole":"setup"' /tmp/suvos-http-roles.out

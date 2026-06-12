@@ -14,6 +14,7 @@ TIMEOUT_SECONDS="${SUVOS_TEST_TIMEOUT:-180}"
 MEMORY="${SUVOS_TEST_MEMORY:-1024M}"
 CPUS="${SUVOS_TEST_CPUS:-1}"
 APPEND_EXTRA="${SUVOS_APPEND_EXTRA:-}"
+EXTRA_QEMU_ARGS="${SUVOS_TEST_EXTRA_QEMU_ARGS:-}"
 ACCEL="${SUVOS_ACCEL:-$DEFAULT_ACCEL}"
 CPU_MODEL="${SUVOS_CPU_MODEL:-$(suvos_default_cpu_model "$ARCH" "$ACCEL")}"
 MACHINE="${SUVOS_MACHINE:-$(suvos_default_machine "$ARCH")}"
@@ -48,7 +49,8 @@ rm -f "$LOG"
   -display none \
   -serial "file:$LOG" \
   -monitor none \
-  -no-reboot &
+  -no-reboot \
+  $EXTRA_QEMU_ARGS &
 
 pid="$!"
 deadline=$((SECONDS + TIMEOUT_SECONDS))

@@ -90,6 +90,12 @@ fi
 clear 2>/dev/null || true
 suvos-motd 2>/dev/null || cat /etc/motd 2>/dev/null || true
 
+/system/suvos/bin/suvos-load-network >/tmp/suvos-network.log 2>&1 || true
+cat /tmp/suvos-network.log >/dev/console 2>/dev/null || true
+
+/system/suvos/bin/suvos-start-system-services >/tmp/suvos-system-services.log 2>&1 || true
+cat /tmp/suvos-system-services.log >/dev/console 2>/dev/null || true
+
 /system/suvos/bin/suvosd &
 
 for _ in 1 2 3; do

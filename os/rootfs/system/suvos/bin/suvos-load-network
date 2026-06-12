@@ -1,0 +1,41 @@
+#!/bin/sh
+
+MODULE_ROOT="/system/suvos/modules/network"
+MODULE_ORDER="/system/suvos/modules/network.order"
+
+if [ ! -r "$MODULE_ORDER" ]; then
+  echo "suvos-network: module order file is missing"
+  exit 0
+fi
+
+echo "suvos-network: loading ethernet modules"
+
+while IFS= read -r module; do
+  [ -n "$module" ] || continue
+  module_path="$MODULE_ROOT/$module"
+  if [ ! -r "$module_path" ]; then
+    echo "suvos-network: missing module: $module"
+    continue
+  fi
+  insmod "$module_path" 2>/tmp/suvos-network-insmod.err || {
+    error="$(cat /tmp/suvos-network-insmod.err 2>/dev/null || true)"
+    case "$error" in
+      *"File exists"*|*"already loaded"*) ;;
+      *) echo "suvos-network: insmod $module: $error" ;;
+    esac
+  }
+done <"$MODULE_ORDER"
+
+for _ in 1 2 3 4 5; do
+  for iface in /sys/class/net/*; do
+    [ -e "$iface" ] || continue
+    name="${iface##*/}"
+    [ "$name" = "lo" ] && continue
+    echo "suvos-network: interface ready: $name"
+    exit 0
+  done
+  sleep 1
+done
+
+echo "suvos-network: no non-loopback interface detected"
+exit 0
