@@ -173,6 +173,20 @@ export XCURSOR_THEME="${SUVOS_CURSOR_THEME:-${XCURSOR_THEME:-Adwaita}}"
 export XCURSOR_SIZE="${SUVOS_CURSOR_SIZE:-${XCURSOR_SIZE:-24}}"
 export XCURSOR_PATH="${XCURSOR_PATH:-/usr/share/icons:/usr/share/pixmaps}"
 
+SUVOS_LANG="${SUVOS_LANG:-ru}"
+case "${SUVOS_LANG%%_*}" in
+  en)
+    export LANG="en_US.UTF-8"
+    export LC_MESSAGES="en_US.UTF-8"
+    export LANGUAGE="en_US:en"
+    ;;
+  *)
+    export LANG="ru_RU.UTF-8"
+    export LC_MESSAGES="ru_RU.UTF-8"
+    export LANGUAGE="ru_RU:ru"
+    ;;
+esac
+
 start_udev() {
   udevd_bin=""
   for candidate in /sbin/udevd /usr/sbin/udevd udevd; do
@@ -370,6 +384,7 @@ set -- "$CHROMIUM_BIN" \
   --user-data-dir="$BROWSER_HOME/profile" \
   --no-first-run \
   --no-default-browser-check \
+  --suvos-shell-hide-window-controls \
   --disable-background-networking \
   --disable-sync \
   --disable-dev-shm-usage \
@@ -431,6 +446,7 @@ echo "suvos-gui: starting Cage with Chromium"
 echo "suvos-gui: urls=$SUVOS_GUI_URLS"
 echo "suvos-gui: chromium artifact vendor: ${CHROMIUM_ARTIFACT_VENDOR:-unknown}"
 echo "suvos-gui: chromium gl mode: $CHROMIUM_GL_MODE"
+echo "suvos-gui: language: ${SUVOS_LANG:-ru} (LANG=$LANG)"
 echo "suvos-gui: wlroots renderer: ${WLR_RENDERER:-auto}"
 printf 'suvos-gui: chromium argv:'
 for arg in "$@"; do

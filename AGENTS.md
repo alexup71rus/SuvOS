@@ -12,6 +12,12 @@ Use Russian for user-facing explanations unless the user asks otherwise. Code id
 
 - Do not install SuvOS onto the host machine.
 - Test through QEMU only.
+- On a remote Windows host, do not launch long-running WSL/QEMU/Chromium
+  builds directly from an SSH session or an interactive shell. Windows can
+  terminate those processes when the session closes or the user logs out.
+  Launch long jobs through Windows Task Scheduler (or an equivalent persistent
+  Windows background mechanism) and write progress logs to a Windows-visible
+  path such as `C:\Projects\SuvOS\build\...`.
 - Do not remove generated boot artifacts unless the user asks or they are clearly temporary cache/log/rootfs output.
 - Do not commit `build/` artifacts.
 - Keep Alpine package caches out of git; `build/cache`, `build/kernel`, and `build/assets` are generated.
@@ -23,6 +29,8 @@ Use Russian for user-facing explanations unless the user asks otherwise. Code id
 
 ## Architecture Rules
 
+- Keep the root `README.md` as the short language index. Main project
+  documentation belongs in `README.ru.md`, `README.en.md`, and `docs/`.
 - Keep project-owned system files under `/system/suvos`.
 - Keep runtime/user-writable state under `/data/suvos`.
 - Keep `/opt/suvos` as a compatibility symlink only.
@@ -36,10 +44,13 @@ Use Russian for user-facing explanations unless the user asks otherwise. Code id
 - Keep UI source under `src/ui`; copy only built `build/ui` artifacts into the initramfs image.
 - Build/check the frontend bundle through `make ui` and `npm run ui:check`; initramfs assembly should only verify and copy `build/ui`, not rebuild UI sources directly.
 - Do not clone Chromium, VS Code/Code - OSS, OpenVSCode Server, or other large upstream browser/editor sources into this repository. Browser/editor forks must remain separate vendor checkouts, pinned through `third_party/vendors.lock.json`, and only feed built artifacts or documented integration points into SuvOS.
-- For Chromium build/run steps (Linux arm64/x86_64 Alpine artifacts via `make chromium`, and the macOS arm64 source build of `third_party/SuvOS_Chromium`), follow `docs/chromium-build-run.md`. Run the macOS Chromium source build through `scripts/build-chromium-macos.sh`; it limits `siso` to 10 jobs by default and writes `build/ninja-chrome.log`.
+- For Chromium build/run steps, follow `docs/chromium-build-run.md`. `third_party/vendors.lock.json` names the Chromium checkout path as `third_party/chromium`; on source-build hosts this may be a symlink to the full `third_party/SuvOS_Chromium` checkout. Do not treat these as two independent Chromium trees.
+- Run Chromium source builds through `scripts/build-chromium-source.sh` or a wrapper that calls it. Do not run long Chromium rebuilds through plain `ninja` from an SSH session: this can ignore the established `siso`/`autoninja` workflow, expand the dirty graph dramatically, and miss the root `node_modules` isolation.
+- For the Windows/WSL x86_64 target host, keep the build tree in WSL (`/home/mypc/Projects/SuvOS`) and use Windows-visible logs/artifacts under `C:\Projects\SuvOS`. Long Chromium/QEMU jobs must be launched through Windows Task Scheduler; see `docs/windows-wsl-x86_64.md`.
 - Keep Admin Explorer Code (AEC) as a separate root-capable guest admin/debug explorer. The normal manual `make run` profile includes it, but core builds and user-facing file APIs must not depend on it. AEC may expose unrestricted guest filesystem access inside the VM by design; host filesystem access remains out of scope. The policy-aware `suvos-gateway -> suvosd` file API belongs to the separate user-facing file picker/file manager track.
 - Keep `suvos-splash` framebuffer-only as the current graphics smoke baseline.
 - For the browser shell, follow `SuvOS_CONCEPT.md`: Wayland runtime + Cage + ordinary Chromium, not `--kiosk`/`--app`, unless the user explicitly changes the browser-shell requirement.
+- In the SuvOS browser shell, Chromium is the OS shell surface rather than a normal resizable app window. The default GUI launch must pass `--suvos-shell-hide-window-controls` to the SuvOS Chromium fork so standard minimize/maximize/close buttons and caption resize/maximize behavior stay disabled.
 - Store the Chromium profile under `/data/suvos/chromium`; do not put browser user state in `/system/suvos`.
 - Run Cage/Chromium as `suvos-browser`, not root. Do not add `--no-sandbox` to the default GUI boot; use only the explicit dev escape documented in `SuvOS_CONCEPT.md`.
 - Keep QEMU software-rendering flags scoped to explicit render profiles such as `suvos.render=qemu-tcg` and `suvos.render=qemu-hvf`; the implicit default render profile is `hardware`. For the current `SuvOS_Chromium` vendor artifact based on Alpine `chromium`, QEMU render profiles use ANGLE `gl-egl` over Mesa llvmpipe, not `--disable-gpu`.

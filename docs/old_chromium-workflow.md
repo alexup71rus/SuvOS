@@ -1,4 +1,8 @@
-Актуальный план написан в reaadme.
+Исторический документ. Актуальные команды сборки/запуска Chromium находятся в
+`docs/chromium-build-run.md`, а текущий Windows/WSL x86_64 host-flow - в
+`docs/windows-wsl-x86_64.md`.
+
+Старый план был написан в README.
 
 # Chromium Workflow
 

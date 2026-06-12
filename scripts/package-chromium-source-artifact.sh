@@ -11,6 +11,10 @@ lock_value() {
 }
 
 resolve_chromium_repo() {
+  if [ -n "${SUVOS_CHROMIUM_SOURCE_DIR:-}" ]; then
+    printf '%s\n' "$SUVOS_CHROMIUM_SOURCE_DIR"
+    return 0
+  fi
   if [ -n "${SUVOS_CHROMIUM_REPO:-}" ]; then
     printf '%s\n' "$SUVOS_CHROMIUM_REPO"
     return 0
@@ -64,12 +68,34 @@ DIST_TAR="$DIST_DIR/$DIST_TAR_NAME"
 STAGE="$(mktemp -d "$ROOT_DIR/build/chromium-source-rootfs.XXXXXX")"
 BUILD_DEB="${SUVOS_CHROMIUM_BUILD_DEB:-1}"
 JOBS="${SUVOS_CHROMIUM_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 8)}"
+NODE_MODULES_DIR="$ROOT_DIR/node_modules"
+HIDDEN_NODE_MODULES_DIR="$ROOT_DIR/node_modules.hidden-during-chromium-build"
+MOVED_NODE_MODULES=0
 
 cleanup() {
+  if [ "$MOVED_NODE_MODULES" -eq 1 ] && [ -d "$HIDDEN_NODE_MODULES_DIR" ]; then
+    mv "$HIDDEN_NODE_MODULES_DIR" "$NODE_MODULES_DIR"
+  fi
   chmod -R u+w "$STAGE" 2>/dev/null || true
   rm -rf "$STAGE"
 }
 trap cleanup EXIT
+
+hide_root_node_modules() {
+  if [ ! -e "$NODE_MODULES_DIR" ] && [ -d "$HIDDEN_NODE_MODULES_DIR" ]; then
+    echo "Restoring previously hidden node_modules: $HIDDEN_NODE_MODULES_DIR"
+    mv "$HIDDEN_NODE_MODULES_DIR" "$NODE_MODULES_DIR"
+  fi
+
+  if [ -d "$NODE_MODULES_DIR" ]; then
+    if [ -e "$HIDDEN_NODE_MODULES_DIR" ]; then
+      echo "Refusing to move node_modules: already exists: $HIDDEN_NODE_MODULES_DIR" >&2
+      exit 2
+    fi
+    mv "$NODE_MODULES_DIR" "$HIDDEN_NODE_MODULES_DIR"
+    MOVED_NODE_MODULES=1
+  fi
+}
 
 copy_with_target() {
   src="$1"
@@ -204,6 +230,7 @@ command -v dpkg-deb >/dev/null 2>&1 || {
 mkdir -p "$DIST_DIR" "$ROOT_DIR/build"
 
 if [ "$BUILD_DEB" = "1" ]; then
+  hide_root_node_modules
   if [ -d "$ROOT_DIR/build/depot_tools" ]; then
     export PATH="$ROOT_DIR/build/depot_tools:$PATH"
   fi

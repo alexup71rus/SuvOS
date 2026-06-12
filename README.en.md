@@ -26,15 +26,20 @@ make run
 `third_party/vendors.lock.json`:
 
 - `SuvOS_AEC` -> `third_party/SuvOS_AEC`;
-- `SuvOS_Chromium` -> `third_party/chromium`.
+- `SuvOS_Chromium` -> `third_party/chromium` in the lockfile. On a source-build
+  host, the full checkout may live at `third_party/SuvOS_Chromium`, with
+  `third_party/chromium` as a symlink to it.
 
 `make run` builds the GUI+AEC initramfs and runs SuvOS in QEMU. Chromium opens
 two tabs: `http://suv.os/` for the current system web UI and
 `http://suv.os/aec/` for AEC.
 
 Chromium fork rules and the local Docker gateway are documented in
-[docs/chromium-workflow.md](docs/chromium-workflow.md). The main Chromium loop
-runs on the workstation first; the SuvOS VM comes after host-level validation.
+[docs/chromium-build-run.md](docs/chromium-build-run.md). For the current
+Windows/WSL x86_64 host flow, see
+[docs/windows-wsl-x86_64.md](docs/windows-wsl-x86_64.md). The main Chromium
+loop runs on the workstation first; the SuvOS VM comes after host-level
+validation.
 
 ## Requirements
 
@@ -203,6 +208,11 @@ The normal manual run builds the GUI+AEC profile and opens Chromium tabs for
 On Apple Silicon, `make run` selects `run-arm64`: `aarch64` kernel/assets,
 `aarch64` rootfs packages, an arm64 AEC artifact, and QEMU-HVF. On other hosts,
 the default backend is x86_64 QEMU/TCG.
+
+In WSL, `make run` selects `run-windows-qemu`: the initramfs is built inside
+WSL, while the QEMU window is started on the Windows host through
+`scripts/run-suvos-windows-qemu.sh`. This is the current primary path for
+x86_64 target validation.
 
 Explicit runners:
 
@@ -452,6 +462,9 @@ Important rules:
 - browser state is stored under `/data/suvos/chromium`;
 - `--no-sandbox` is forbidden in the default GUI boot;
 - `--kiosk` and `--app` are not used for the main browser shell;
+- Chromium's standard window buttons and caption resize/maximize behavior are
+  disabled through `--suvos-shell-hide-window-controls`, because Chromium is the
+  OS shell surface rather than a normal resizable application window;
 - `xwayland` may exist only as a Cage package runtime dependency;
 - browser-shell exit is treated as a recoverable failure: `/init` restarts
   Cage/Chromium up to the limit, then shows the crash/fallback screen and
