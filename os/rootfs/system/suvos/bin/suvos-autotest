@@ -63,6 +63,72 @@ cat /tmp/suvos-http-status.out
 grep -q '"status":"booted"' /tmp/suvos-http-status.out
 grep -q '"systemRootReadOnly":true' /tmp/suvos-http-status.out
 grep -q '"apiSocketAvailable":true' /tmp/suvos-http-status.out
+wget -q -O /tmp/suvos-http-system-network.out http://suv.os/api/system/network
+cat /tmp/suvos-http-system-network.out
+grep -q '"ok":true' /tmp/suvos-http-system-network.out
+grep -q '"interfaces":' /tmp/suvos-http-system-network.out
+wget -q -O /tmp/suvos-http-system-network-config.out http://suv.os/api/system/network/config
+cat /tmp/suvos-http-system-network-config.out
+grep -q '"ok":true' /tmp/suvos-http-system-network-config.out
+wget -q -O /tmp/suvos-http-system-network-configure.out --post-data='' 'http://suv.os/api/system/network/configure?mode=dhcp'
+cat /tmp/suvos-http-system-network-configure.out
+grep -q '"ok":true' /tmp/suvos-http-system-network-configure.out
+grep -q '"configured":true' /tmp/suvos-http-system-network-configure.out
+wget -q -O /tmp/suvos-http-system-wifi.out http://suv.os/api/system/wifi
+cat /tmp/suvos-http-system-wifi.out
+grep -q '"ok":true' /tmp/suvos-http-system-wifi.out
+wget -q -O /tmp/suvos-http-system-wifi-config.out http://suv.os/api/system/wifi/config
+cat /tmp/suvos-http-system-wifi-config.out
+grep -q '"ok":true' /tmp/suvos-http-system-wifi-config.out
+wget -q -O /tmp/suvos-http-system-wifi-connect.out --post-data='' 'http://suv.os/api/system/wifi/connect?ssid=SuvOS-Test&psk=test-pass'
+cat /tmp/suvos-http-system-wifi-connect.out
+grep -q '"ok":true' /tmp/suvos-http-system-wifi-connect.out
+grep -q '"configured":true' /tmp/suvos-http-system-wifi-connect.out
+grep -q '"hasPsk":true' /tmp/suvos-http-system-wifi-connect.out
+if grep -q 'test-pass' /tmp/suvos-http-system-wifi-connect.out; then
+  echo "wifi PSK leaked through API response"
+  exit 1
+fi
+wget -q -O /tmp/suvos-http-system-wifi-forget.out --post-data='' http://suv.os/api/system/wifi/forget
+cat /tmp/suvos-http-system-wifi-forget.out
+grep -q '"ok":true' /tmp/suvos-http-system-wifi-forget.out
+wget -q -O /tmp/suvos-http-system-wifi-scan.out http://suv.os/api/system/wifi/scan
+cat /tmp/suvos-http-system-wifi-scan.out
+grep -q '"ok":true' /tmp/suvos-http-system-wifi-scan.out
+grep -q '"networks":' /tmp/suvos-http-system-wifi-scan.out
+wget -q -O /tmp/suvos-http-system-battery.out http://suv.os/api/system/battery
+cat /tmp/suvos-http-system-battery.out
+grep -q '"ok":true' /tmp/suvos-http-system-battery.out
+grep -q '"supplies":' /tmp/suvos-http-system-battery.out
+wget -q -O /tmp/suvos-http-system-bluetooth.out http://suv.os/api/system/bluetooth
+cat /tmp/suvos-http-system-bluetooth.out
+grep -q '"ok":true' /tmp/suvos-http-system-bluetooth.out
+wget -q -O /tmp/suvos-http-system-brightness.out http://suv.os/api/system/brightness
+cat /tmp/suvos-http-system-brightness.out
+grep -q '"ok":true' /tmp/suvos-http-system-brightness.out
+wget -q -O /tmp/suvos-http-system-audio.out http://suv.os/api/system/audio
+cat /tmp/suvos-http-system-audio.out
+grep -q '"ok":true' /tmp/suvos-http-system-audio.out
+wget -q -O /tmp/suvos-http-system-datetime.out http://suv.os/api/system/datetime
+cat /tmp/suvos-http-system-datetime.out
+grep -q '"ok":true' /tmp/suvos-http-system-datetime.out
+grep -q '"canSet":true' /tmp/suvos-http-system-datetime.out
+wget -q -O /tmp/suvos-http-system-network-enable.out --post-data='' http://suv.os/api/system/network/enable
+cat /tmp/suvos-http-system-network-enable.out
+grep -q '"ok":true' /tmp/suvos-http-system-network-enable.out
+wget -q -O /tmp/suvos-http-system-wifi-enable.out --post-data='' http://suv.os/api/system/wifi/enable
+cat /tmp/suvos-http-system-wifi-enable.out
+grep -q '"ok":true' /tmp/suvos-http-system-wifi-enable.out
+wget -q -O /tmp/suvos-http-system-bluetooth-enable.out --post-data='' http://suv.os/api/system/bluetooth/enable
+cat /tmp/suvos-http-system-bluetooth-enable.out
+grep -q '"ok":true' /tmp/suvos-http-system-bluetooth-enable.out
+wget -q -O /tmp/suvos-http-system-brightness-set.out --post-data='' 'http://suv.os/api/system/brightness/set?percent=50'
+cat /tmp/suvos-http-system-brightness-set.out
+grep -q '"ok":true' /tmp/suvos-http-system-brightness-set.out
+if wget -q -O /tmp/suvos-http-system-datetime-invalid.out --post-data='' 'http://suv.os/api/system/datetime/set?epoch=bad'; then
+  echo "invalid datetime epoch was accepted"
+  exit 1
+fi
 wget -q -O /tmp/suvos-http-roles.out http://suv.os/api/roles
 cat /tmp/suvos-http-roles.out
 grep -q '"currentRole":"setup"' /tmp/suvos-http-roles.out

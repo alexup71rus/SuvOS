@@ -13,11 +13,13 @@
 #include <iomanip>
 #include <iostream>
 #include <limits.h>
+#include <map>
 #include <sstream>
 #include <string>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/reboot.h>
+#include <sys/time.h>
 #include <sys/types.h>
 #include <sys/un.h>
 #include <sys/wait.h>
@@ -39,6 +41,9 @@ constexpr const char *kControlSocket = "/run/suvosd/control.sock";
 constexpr const char *kPidFile = "/run/suvosd/pid";
 constexpr const char *kSessionRoleFile = "/run/suvosd/session.role";
 constexpr const char *kSessionAuthFile = "/run/suvosd/session.auth";
+constexpr const char *kNetworkStateDir = "/data/suvos/network";
+constexpr const char *kNetworkConfigPath = "/data/suvos/network/network.conf";
+constexpr const char *kWifiConfigPath = "/data/suvos/network/wifi.conf";
 constexpr const char *kExitPrefix = "__SUVOSD_EXIT__:";
 constexpr int kResponseOpenRetries = 200;
 constexpr int kResponseOpenSleepMicros = 10000;
@@ -368,7 +373,8 @@ void logConsole(const std::string &message) {
   }
 
   std::string line = "[suvosd] " + message + "\n";
-  (void)write(fd, line.data(), line.size());
+  ssize_t ignored = write(fd, line.data(), line.size());
+  (void)ignored;
   close(fd);
 }
 
@@ -999,7 +1005,8 @@ CommandResult runProgram(const std::string &path, const std::vector<std::string>
 
     execv(path.c_str(), argv.data());
     std::string error = "suvosd run: exec failed: " + std::string(strerror(errno)) + "\n";
-    (void)write(STDERR_FILENO, error.data(), error.size());
+    ssize_t ignored = write(STDERR_FILENO, error.data(), error.size());
+    (void)ignored;
     _exit(127);
   }
 
@@ -1078,6 +1085,865 @@ CommandResult runProgram(const std::string &path, const std::vector<std::string>
   }
 
   return {1, output};
+}
+
+std::vector<std::string> listDirNames(const std::string &path) {
+  std::vector<std::string> names;
+  DIR *dir = opendir(path.c_str());
+  if (dir == nullptr) {
+    return names;
+  }
+
+  while (dirent *entry = readdir(dir)) {
+    std::string name(entry->d_name);
+    if (name.empty() || name == "." || name == "..") {
+      continue;
+    }
+    names.push_back(name);
+  }
+
+  closedir(dir);
+  std::sort(names.begin(), names.end());
+  return names;
+}
+
+std::string readTrimmed(const std::string &path) {
+  return trim(readFile(path));
+}
+
+bool writePlainFile(const std::string &path, const std::string &value) {
+  std::ofstream file(path);
+  if (!file) {
+    return false;
+  }
+  file << value;
+  return static_cast<bool>(file);
+}
+
+bool parseLongLong(const std::string &value, long long *out) {
+  if (value.empty()) {
+    return false;
+  }
+
+  char *end = nullptr;
+  errno = 0;
+  long long parsed = std::strtoll(value.c_str(), &end, 10);
+  if (errno != 0 || end == value.c_str() || *end != '\0') {
+    return false;
+  }
+
+  *out = parsed;
+  return true;
+}
+
+bool parsePercent(const std::string &value, int *out) {
+  long long parsed = 0;
+  if (!parseLongLong(value, &parsed) || parsed < 0 || parsed > 100) {
+    return false;
+  }
+  *out = static_cast<int>(parsed);
+  return true;
+}
+
+std::string jsonBool(bool value) {
+  return value ? "true" : "false";
+}
+
+std::string findExecutable(const std::vector<std::string> &candidates) {
+  for (const auto &candidate : candidates) {
+    if (fileExistsExecutable(candidate)) {
+      return candidate;
+    }
+  }
+  return "";
+}
+
+bool validDeviceName(const std::string &value) {
+  if (value.empty() || value.size() > 64 || value.find("..") != std::string::npos ||
+      value.find('/') != std::string::npos || hasControlChar(value)) {
+    return false;
+  }
+
+  for (char ch : value) {
+    const bool allowed = (ch >= 'A' && ch <= 'Z') ||
+                         (ch >= 'a' && ch <= 'z') ||
+                         (ch >= '0' && ch <= '9') ||
+                         ch == '_' || ch == '-' || ch == '.' || ch == ':';
+    if (!allowed) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+bool validConfigValue(const std::string &value, size_t maxSize) {
+  if (value.size() > maxSize || hasControlChar(value)) {
+    return false;
+  }
+  return value.find('\t') == std::string::npos;
+}
+
+std::map<std::string, std::string> parseKeyValueFile(const std::string &path) {
+  std::map<std::string, std::string> values;
+  std::ifstream file(path);
+  std::string line;
+  while (std::getline(file, line)) {
+    line = trim(line);
+    if (line.empty() || line[0] == '#') {
+      continue;
+    }
+    const size_t separator = line.find('=');
+    if (separator == std::string::npos) {
+      continue;
+    }
+    values[trim(line.substr(0, separator))] = trim(line.substr(separator + 1));
+  }
+  return values;
+}
+
+std::map<std::string, std::string> parseOptions(const std::vector<std::string> &parts,
+                                                size_t begin) {
+  std::map<std::string, std::string> values;
+  for (size_t i = begin; i < parts.size(); ++i) {
+    const size_t separator = parts[i].find('=');
+    if (separator == std::string::npos || separator == 0) {
+      values[""] = parts[i];
+      continue;
+    }
+    values[parts[i].substr(0, separator)] = parts[i].substr(separator + 1);
+  }
+  return values;
+}
+
+std::string optionValue(const std::map<std::string, std::string> &options,
+                        const std::string &key) {
+  auto item = options.find(key);
+  return item == options.end() ? "" : item->second;
+}
+
+bool ensureNetworkStateDir() {
+  ensureDir(kDataRoot, 0755);
+  return ensureDir(kNetworkStateDir, 0700);
+}
+
+std::string networkConfigJson() {
+  auto config = parseKeyValueFile(kNetworkConfigPath);
+  const bool configured = !config.empty();
+  const std::string mode = optionValue(config, "mode").empty() ? "dhcp" : optionValue(config, "mode");
+
+  std::ostringstream out;
+  out << "{";
+  out << "\"ok\":true,";
+  out << "\"configured\":" << jsonBool(configured) << ",";
+  out << "\"mode\":\"" << jsonEscape(mode) << "\",";
+  out << "\"interface\":\"" << jsonEscape(optionValue(config, "interface")) << "\",";
+  out << "\"address\":\"" << jsonEscape(optionValue(config, "address")) << "\",";
+  out << "\"gateway\":\"" << jsonEscape(optionValue(config, "gateway")) << "\",";
+  out << "\"dns\":\"" << jsonEscape(optionValue(config, "dns")) << "\"";
+  out << "}\n";
+  return out.str();
+}
+
+CommandResult networkConfigure(const std::map<std::string, std::string> &options) {
+  if (options.count("") > 0) {
+    return {2, "{\"ok\":false,\"error\":\"invalid_option\"}\n"};
+  }
+
+  const std::string mode = optionValue(options, "mode").empty() ? "dhcp" : optionValue(options, "mode");
+  const std::string iface = optionValue(options, "interface");
+  const std::string address = optionValue(options, "address");
+  const std::string gateway = optionValue(options, "gateway");
+  const std::string dns = optionValue(options, "dns");
+
+  if (mode != "dhcp" && mode != "static") {
+    return {2, "{\"ok\":false,\"error\":\"invalid_network_mode\"}\n"};
+  }
+  if (!iface.empty() && (!validDeviceName(iface) || !dirExists("/sys/class/net/" + iface))) {
+    return {2, "{\"ok\":false,\"error\":\"invalid_interface\"}\n"};
+  }
+  if (!validConfigValue(address, 128) ||
+      !validConfigValue(gateway, 128) ||
+      !validConfigValue(dns, 256)) {
+    return {2, "{\"ok\":false,\"error\":\"invalid_network_config\"}\n"};
+  }
+  if (mode == "static" && address.empty()) {
+    return {2, "{\"ok\":false,\"error\":\"missing_static_address\"}\n"};
+  }
+
+  if (!ensureNetworkStateDir()) {
+    return {1, "{\"ok\":false,\"error\":\"network_state_unavailable\"}\n"};
+  }
+
+  std::ostringstream data;
+  data << "mode=" << mode << "\n";
+  data << "interface=" << iface << "\n";
+  data << "address=" << address << "\n";
+  data << "gateway=" << gateway << "\n";
+  data << "dns=" << dns << "\n";
+  if (!writeFile(kNetworkConfigPath, data.str(), 0600)) {
+    return {1, "{\"ok\":false,\"error\":\"network_config_write_failed\"}\n"};
+  }
+
+  std::ostringstream out;
+  out << "{";
+  out << "\"ok\":true,";
+  out << "\"configured\":true,";
+  out << "\"mode\":\"" << jsonEscape(mode) << "\",";
+  out << "\"applied\":false,";
+  out << "\"reason\":\"network_apply_not_implemented\"";
+  out << "}\n";
+  return {0, out.str()};
+}
+
+std::vector<std::string> networkInterfaces(bool includeLoopback) {
+  std::vector<std::string> names;
+  for (const auto &name : listDirNames("/sys/class/net")) {
+    if (!includeLoopback && name == "lo") {
+      continue;
+    }
+    if (validDeviceName(name)) {
+      names.push_back(name);
+    }
+  }
+  return names;
+}
+
+bool hasDefaultRoute() {
+  std::ifstream routes("/proc/net/route");
+  std::string line;
+  std::getline(routes, line);
+  while (std::getline(routes, line)) {
+    auto fields = split(line, '\t');
+    if (fields.size() >= 4 && fields[1] == "00000000") {
+      return true;
+    }
+  }
+  return false;
+}
+
+std::string networkJson() {
+  const bool available = dirExists("/sys/class/net");
+  const auto names = networkInterfaces(true);
+  bool anyNonLoopback = false;
+  bool anyEnabled = false;
+
+  std::ostringstream out;
+  out << "{";
+  out << "\"ok\":true,";
+  out << "\"available\":" << jsonBool(available) << ",";
+  out << "\"online\":" << jsonBool(hasDefaultRoute()) << ",";
+  out << "\"interfaces\":[";
+  for (size_t i = 0; i < names.size(); ++i) {
+    const std::string base = "/sys/class/net/" + names[i];
+    const bool loopback = names[i] == "lo";
+    const bool wireless = dirExists(base + "/wireless");
+    const std::string operstate = readTrimmed(base + "/operstate");
+    const std::string carrier = readTrimmed(base + "/carrier");
+    if (!loopback) {
+      anyNonLoopback = true;
+      if (operstate != "down") {
+        anyEnabled = true;
+      }
+    }
+
+    if (i > 0) {
+      out << ",";
+    }
+    out << "{";
+    out << "\"name\":\"" << jsonEscape(names[i]) << "\",";
+    out << "\"loopback\":" << jsonBool(loopback) << ",";
+    out << "\"wireless\":" << jsonBool(wireless) << ",";
+    out << "\"enabled\":" << jsonBool(operstate != "down") << ",";
+    out << "\"operstate\":\"" << jsonEscape(operstate.empty() ? "unknown" : operstate) << "\",";
+    if (carrier.empty()) {
+      out << "\"carrier\":null";
+    } else {
+      out << "\"carrier\":" << (carrier == "1" ? "true" : "false");
+    }
+    out << "}";
+  }
+  out << "],";
+  out << "\"enabled\":" << jsonBool(anyEnabled) << ",";
+  out << "\"manageable\":" << jsonBool(anyNonLoopback);
+  out << "}\n";
+  return out.str();
+}
+
+CommandResult networkAction(const std::string &action, const std::string &requestedInterface) {
+  if (action != "enable" && action != "disable") {
+    return {2, "{\"ok\":false,\"error\":\"unknown_network_action\"}\n"};
+  }
+
+  const std::string ifconfig = findExecutable({
+      "/bin/ifconfig", "/sbin/ifconfig", "/usr/bin/ifconfig", "/usr/sbin/ifconfig"});
+  if (ifconfig.empty()) {
+    return {0, "{\"ok\":true,\"available\":false,\"reason\":\"ifconfig_missing\"}\n"};
+  }
+
+  std::vector<std::string> targets;
+  if (!requestedInterface.empty()) {
+    if (!validDeviceName(requestedInterface) ||
+        !dirExists("/sys/class/net/" + requestedInterface) ||
+        requestedInterface == "lo") {
+      return {2, "{\"ok\":false,\"error\":\"invalid_interface\"}\n"};
+    }
+    targets.push_back(requestedInterface);
+  } else {
+    targets = networkInterfaces(false);
+  }
+
+  if (targets.empty()) {
+    return {0, "{\"ok\":true,\"available\":false,\"reason\":\"no_network_interface\"}\n"};
+  }
+
+  const std::string state = action == "enable" ? "up" : "down";
+  bool success = true;
+  std::ostringstream details;
+  for (size_t i = 0; i < targets.size(); ++i) {
+    CommandResult result = runProgram(ifconfig, {targets[i], state});
+    if (result.code != 0) {
+      success = false;
+    }
+    if (i > 0) {
+      details << "; ";
+    }
+    details << targets[i] << "=" << result.code;
+  }
+
+  std::ostringstream out;
+  out << "{";
+  out << "\"ok\":" << jsonBool(success) << ",";
+  out << "\"available\":true,";
+  out << "\"action\":\"" << action << "\",";
+  out << "\"details\":\"" << jsonEscape(details.str()) << "\"";
+  out << "}\n";
+  return {success ? 0 : 1, out.str()};
+}
+
+std::vector<std::string> wirelessInterfaces() {
+  std::vector<std::string> names;
+  for (const auto &name : networkInterfaces(false)) {
+    if (dirExists("/sys/class/net/" + name + "/wireless")) {
+      names.push_back(name);
+    }
+  }
+  return names;
+}
+
+std::string wifiJson() {
+  const auto names = wirelessInterfaces();
+  bool anyEnabled = false;
+  auto config = parseKeyValueFile(kWifiConfigPath);
+
+  std::ostringstream out;
+  out << "{";
+  out << "\"ok\":true,";
+  out << "\"available\":" << jsonBool(!names.empty()) << ",";
+  out << "\"configured\":" << jsonBool(!config.empty()) << ",";
+  out << "\"configuredSsid\":\"" << jsonEscape(optionValue(config, "ssid")) << "\",";
+  out << "\"interfaces\":[";
+  for (size_t i = 0; i < names.size(); ++i) {
+    const std::string operstate = readTrimmed("/sys/class/net/" + names[i] + "/operstate");
+    if (operstate != "down") {
+      anyEnabled = true;
+    }
+    if (i > 0) {
+      out << ",";
+    }
+    out << "{";
+    out << "\"name\":\"" << jsonEscape(names[i]) << "\",";
+    out << "\"enabled\":" << jsonBool(operstate != "down") << ",";
+    out << "\"operstate\":\"" << jsonEscape(operstate.empty() ? "unknown" : operstate) << "\"";
+    out << "}";
+  }
+  out << "],";
+  out << "\"enabled\":" << jsonBool(anyEnabled);
+  if (names.empty()) {
+    out << ",\"reason\":\"no_wireless_interface\"";
+  }
+  out << "}\n";
+  return out.str();
+}
+
+std::string wifiConfigJson() {
+  auto config = parseKeyValueFile(kWifiConfigPath);
+  const std::string ssid = optionValue(config, "ssid");
+  const std::string psk = optionValue(config, "psk");
+
+  std::ostringstream out;
+  out << "{";
+  out << "\"ok\":true,";
+  out << "\"configured\":" << jsonBool(!ssid.empty()) << ",";
+  out << "\"ssid\":\"" << jsonEscape(ssid) << "\",";
+  out << "\"hasPsk\":" << jsonBool(!psk.empty()) << ",";
+  out << "\"path\":\"" << jsonEscape(kWifiConfigPath) << "\"";
+  out << "}\n";
+  return out.str();
+}
+
+CommandResult wifiConnect(const std::map<std::string, std::string> &options) {
+  if (options.count("") > 0) {
+    return {2, "{\"ok\":false,\"error\":\"invalid_option\"}\n"};
+  }
+
+  const std::string ssid = optionValue(options, "ssid");
+  const std::string psk = optionValue(options, "psk");
+  if (ssid.empty() || !validConfigValue(ssid, 96)) {
+    return {2, "{\"ok\":false,\"error\":\"invalid_ssid\"}\n"};
+  }
+  if (!validConfigValue(psk, 128)) {
+    return {2, "{\"ok\":false,\"error\":\"invalid_psk\"}\n"};
+  }
+
+  if (!ensureNetworkStateDir()) {
+    return {1, "{\"ok\":false,\"error\":\"network_state_unavailable\"}\n"};
+  }
+
+  std::ostringstream data;
+  data << "ssid=" << ssid << "\n";
+  data << "psk=" << psk << "\n";
+  if (!writeFile(kWifiConfigPath, data.str(), 0600)) {
+    return {1, "{\"ok\":false,\"error\":\"wifi_config_write_failed\"}\n"};
+  }
+
+  const bool hasWifiTool = !findExecutable({
+      "/sbin/wpa_cli", "/usr/sbin/wpa_cli", "/bin/wpa_cli", "/usr/bin/wpa_cli",
+      "/usr/bin/nmcli", "/bin/nmcli"}).empty();
+
+  std::ostringstream out;
+  out << "{";
+  out << "\"ok\":true,";
+  out << "\"configured\":true,";
+  out << "\"ssid\":\"" << jsonEscape(ssid) << "\",";
+  out << "\"hasPsk\":" << jsonBool(!psk.empty()) << ",";
+  out << "\"applied\":false,";
+  out << "\"reason\":\"" << (hasWifiTool ? "wifi_apply_deferred" : "wifi_tool_missing") << "\"";
+  out << "}\n";
+  return {0, out.str()};
+}
+
+CommandResult wifiForget() {
+  unlink(kWifiConfigPath);
+  return {0, "{\"ok\":true,\"configured\":false}\n"};
+}
+
+std::string wifiScanJson() {
+  const auto names = wirelessInterfaces();
+  if (names.empty()) {
+    return "{\"ok\":true,\"available\":false,\"reason\":\"no_wireless_interface\",\"networks\":[]}\n";
+  }
+
+  const std::string iw = findExecutable({"/sbin/iw", "/usr/sbin/iw", "/bin/iw", "/usr/bin/iw"});
+  if (iw.empty()) {
+    return "{\"ok\":true,\"available\":false,\"reason\":\"iw_missing\",\"networks\":[]}\n";
+  }
+
+  std::vector<std::map<std::string, std::string>> networks;
+  for (const auto &iface : names) {
+    CommandResult scan = runProgram(iw, {"dev", iface, "scan"});
+    if (scan.code != 0) {
+      continue;
+    }
+
+    std::map<std::string, std::string> current;
+    std::istringstream lines(scan.output);
+    std::string line;
+    while (std::getline(lines, line)) {
+      line = trim(line);
+      if (line.rfind("BSS ", 0) == 0) {
+        if (!current.empty()) {
+          networks.push_back(current);
+        }
+        current.clear();
+        auto fields = split(line, ' ');
+        if (fields.size() >= 2) {
+          current["bssid"] = fields[1];
+        }
+        current["interface"] = iface;
+      } else if (line.rfind("SSID:", 0) == 0) {
+        current["ssid"] = trim(line.substr(5));
+      } else if (line.rfind("signal:", 0) == 0) {
+        current["signal"] = trim(line.substr(7));
+      } else if (line.rfind("freq:", 0) == 0) {
+        current["frequency"] = trim(line.substr(5));
+      }
+    }
+    if (!current.empty()) {
+      networks.push_back(current);
+    }
+  }
+
+  std::ostringstream out;
+  out << "{\"ok\":true,\"available\":true,\"networks\":[";
+  for (size_t i = 0; i < networks.size(); ++i) {
+    if (i > 0) {
+      out << ",";
+    }
+    out << "{";
+    out << "\"ssid\":\"" << jsonEscape(networks[i]["ssid"]) << "\",";
+    out << "\"bssid\":\"" << jsonEscape(networks[i]["bssid"]) << "\",";
+    out << "\"signal\":\"" << jsonEscape(networks[i]["signal"]) << "\",";
+    out << "\"frequency\":\"" << jsonEscape(networks[i]["frequency"]) << "\",";
+    out << "\"interface\":\"" << jsonEscape(networks[i]["interface"]) << "\"";
+    out << "}";
+  }
+  out << "]}\n";
+  return out.str();
+}
+
+CommandResult wifiAction(const std::string &action, const std::string &requestedInterface) {
+  if (action != "enable" && action != "disable") {
+    return {2, "{\"ok\":false,\"error\":\"unknown_wifi_action\"}\n"};
+  }
+
+  if (!requestedInterface.empty()) {
+    if (!validDeviceName(requestedInterface) ||
+        !dirExists("/sys/class/net/" + requestedInterface + "/wireless")) {
+      return {2, "{\"ok\":false,\"error\":\"invalid_wireless_interface\"}\n"};
+    }
+    return networkAction(action, requestedInterface);
+  }
+
+  const auto names = wirelessInterfaces();
+  if (names.empty()) {
+    return {0, "{\"ok\":true,\"available\":false,\"reason\":\"no_wireless_interface\"}\n"};
+  }
+
+  bool success = true;
+  for (const auto &name : names) {
+    CommandResult result = networkAction(action, name);
+    success = success && result.code == 0;
+  }
+
+  std::ostringstream out;
+  out << "{\"ok\":" << jsonBool(success) << ",\"available\":true,\"action\":\""
+      << action << "\"}\n";
+  return {success ? 0 : 1, out.str()};
+}
+
+std::string batteryJson() {
+  struct Supply {
+    std::string name;
+    std::string type;
+    std::string status;
+    std::string capacity;
+    std::string online;
+  };
+
+  std::vector<Supply> supplies;
+  bool hasBattery = false;
+  bool onExternalPower = false;
+  for (const auto &name : listDirNames("/sys/class/power_supply")) {
+    const std::string base = "/sys/class/power_supply/" + name;
+    Supply supply {
+      name,
+      readTrimmed(base + "/type"),
+      readTrimmed(base + "/status"),
+      readTrimmed(base + "/capacity"),
+      readTrimmed(base + "/online")
+    };
+    if (supply.type == "Battery") {
+      hasBattery = true;
+    }
+    if (supply.type != "Battery" && supply.online == "1") {
+      onExternalPower = true;
+    }
+    supplies.push_back(supply);
+  }
+
+  std::ostringstream out;
+  out << "{";
+  out << "\"ok\":true,";
+  out << "\"available\":" << jsonBool(hasBattery) << ",";
+  out << "\"onExternalPower\":" << jsonBool(onExternalPower) << ",";
+  out << "\"supplies\":[";
+  for (size_t i = 0; i < supplies.size(); ++i) {
+    if (i > 0) {
+      out << ",";
+    }
+    out << "{";
+    out << "\"name\":\"" << jsonEscape(supplies[i].name) << "\",";
+    out << "\"type\":\"" << jsonEscape(supplies[i].type) << "\",";
+    out << "\"status\":\"" << jsonEscape(supplies[i].status) << "\",";
+    long long capacity = 0;
+    if (!parseLongLong(supplies[i].capacity, &capacity)) {
+      out << "\"capacityPercent\":null,";
+    } else {
+      out << "\"capacityPercent\":" << capacity << ",";
+    }
+    if (supplies[i].online.empty()) {
+      out << "\"online\":null";
+    } else {
+      out << "\"online\":" << (supplies[i].online == "1" ? "true" : "false");
+    }
+    out << "}";
+  }
+  out << "]";
+  if (!hasBattery) {
+    out << ",\"reason\":\"no_battery\"";
+  }
+  out << "}\n";
+  return out.str();
+}
+
+std::vector<std::string> bluetoothRfkillEntries() {
+  std::vector<std::string> entries;
+  for (const auto &name : listDirNames("/sys/class/rfkill")) {
+    const std::string base = "/sys/class/rfkill/" + name;
+    if (readTrimmed(base + "/type") == "bluetooth") {
+      entries.push_back(name);
+    }
+  }
+  return entries;
+}
+
+std::string bluetoothJson() {
+  const auto rfkills = bluetoothRfkillEntries();
+  const auto controllers = listDirNames("/sys/class/bluetooth");
+  bool blocked = false;
+  bool anyUnblocked = false;
+
+  std::ostringstream out;
+  out << "{";
+  out << "\"ok\":true,";
+  out << "\"available\":" << jsonBool(!rfkills.empty() || !controllers.empty()) << ",";
+  out << "\"controllers\":[";
+  for (size_t i = 0; i < controllers.size(); ++i) {
+    if (i > 0) {
+      out << ",";
+    }
+    out << "\"" << jsonEscape(controllers[i]) << "\"";
+  }
+  out << "],";
+  out << "\"rfkill\":[";
+  for (size_t i = 0; i < rfkills.size(); ++i) {
+    const std::string soft = readTrimmed("/sys/class/rfkill/" + rfkills[i] + "/soft");
+    if (soft == "1") {
+      blocked = true;
+    } else if (soft == "0") {
+      anyUnblocked = true;
+    }
+    if (i > 0) {
+      out << ",";
+    }
+    out << "{";
+    out << "\"name\":\"" << jsonEscape(rfkills[i]) << "\",";
+    out << "\"blocked\":" << jsonBool(soft == "1");
+    out << "}";
+  }
+  out << "],";
+  out << "\"enabled\":" << jsonBool(anyUnblocked || (!controllers.empty() && !blocked)) << ",";
+  out << "\"blocked\":" << jsonBool(blocked);
+  if (rfkills.empty() && controllers.empty()) {
+    out << ",\"reason\":\"no_bluetooth_device\"";
+  }
+  out << "}\n";
+  return out.str();
+}
+
+CommandResult bluetoothAction(const std::string &action) {
+  if (action != "enable" && action != "disable") {
+    return {2, "{\"ok\":false,\"error\":\"unknown_bluetooth_action\"}\n"};
+  }
+
+  const auto rfkills = bluetoothRfkillEntries();
+  if (rfkills.empty()) {
+    return {0, "{\"ok\":true,\"available\":false,\"reason\":\"no_bluetooth_rfkill\"}\n"};
+  }
+
+  bool success = true;
+  const std::string soft = action == "enable" ? "0\n" : "1\n";
+  for (const auto &entry : rfkills) {
+    success = writePlainFile("/sys/class/rfkill/" + entry + "/soft", soft) && success;
+  }
+
+  std::ostringstream out;
+  out << "{\"ok\":" << jsonBool(success) << ",\"available\":true,\"action\":\""
+      << action << "\"}\n";
+  return {success ? 0 : 1, out.str()};
+}
+
+std::string brightnessJson() {
+  const auto devices = listDirNames("/sys/class/backlight");
+  std::ostringstream out;
+  out << "{";
+  out << "\"ok\":true,";
+  out << "\"available\":" << jsonBool(!devices.empty()) << ",";
+  out << "\"devices\":[";
+  for (size_t i = 0; i < devices.size(); ++i) {
+    const std::string base = "/sys/class/backlight/" + devices[i];
+    long long brightness = 0;
+    long long maxBrightness = 0;
+    parseLongLong(readTrimmed(base + "/brightness"), &brightness);
+    parseLongLong(readTrimmed(base + "/max_brightness"), &maxBrightness);
+    const long long percent = maxBrightness > 0 ? (brightness * 100LL) / maxBrightness : 0;
+
+    if (i > 0) {
+      out << ",";
+    }
+    out << "{";
+    out << "\"name\":\"" << jsonEscape(devices[i]) << "\",";
+    out << "\"brightness\":" << brightness << ",";
+    out << "\"maxBrightness\":" << maxBrightness << ",";
+    out << "\"percent\":" << percent;
+    out << "}";
+  }
+  out << "]";
+  if (!devices.empty()) {
+    const std::string base = "/sys/class/backlight/" + devices[0];
+    long long brightness = 0;
+    long long maxBrightness = 0;
+    parseLongLong(readTrimmed(base + "/brightness"), &brightness);
+    parseLongLong(readTrimmed(base + "/max_brightness"), &maxBrightness);
+    out << ",\"activeDevice\":\"" << jsonEscape(devices[0]) << "\"";
+    out << ",\"percent\":" << (maxBrightness > 0 ? (brightness * 100LL) / maxBrightness : 0);
+  } else {
+    out << ",\"reason\":\"no_backlight\"";
+  }
+  out << "}\n";
+  return out.str();
+}
+
+CommandResult brightnessSet(const std::string &percentValue) {
+  int percent = 0;
+  if (!parsePercent(percentValue, &percent)) {
+    return {2, "{\"ok\":false,\"error\":\"invalid_percent\"}\n"};
+  }
+
+  const auto devices = listDirNames("/sys/class/backlight");
+  if (devices.empty()) {
+    return {0, "{\"ok\":true,\"available\":false,\"reason\":\"no_backlight\"}\n"};
+  }
+
+  const std::string base = "/sys/class/backlight/" + devices[0];
+  long long maxBrightness = 0;
+  if (!parseLongLong(readTrimmed(base + "/max_brightness"), &maxBrightness) || maxBrightness <= 0) {
+    return {1, "{\"ok\":false,\"available\":true,\"error\":\"invalid_max_brightness\"}\n"};
+  }
+
+  long long value = (maxBrightness * percent) / 100;
+  if (percent > 0 && value == 0) {
+    value = 1;
+  }
+
+  const bool success = writePlainFile(base + "/brightness", std::to_string(value) + "\n");
+  std::ostringstream out;
+  out << "{\"ok\":" << jsonBool(success) << ",\"available\":true,\"percent\":"
+      << percent << ",\"device\":\"" << jsonEscape(devices[0]) << "\"}\n";
+  return {success ? 0 : 1, out.str()};
+}
+
+int parseFirstAudioPercent(const std::string &output) {
+  const size_t percentPos = output.find('%');
+  if (percentPos == std::string::npos) {
+    return -1;
+  }
+
+  size_t begin = percentPos;
+  while (begin > 0 && std::isdigit(static_cast<unsigned char>(output[begin - 1]))) {
+    --begin;
+  }
+
+  if (begin == percentPos) {
+    return -1;
+  }
+
+  try {
+    return std::stoi(output.substr(begin, percentPos - begin));
+  } catch (...) {
+    return -1;
+  }
+}
+
+std::string audioJson() {
+  const std::string amixer = findExecutable({"/usr/bin/amixer", "/bin/amixer"});
+  if (amixer.empty()) {
+    return "{\"ok\":true,\"available\":false,\"reason\":\"amixer_missing\"}\n";
+  }
+
+  CommandResult result = runProgram(amixer, {"get", "Master"});
+  if (result.code != 0) {
+    return "{\"ok\":true,\"available\":false,\"reason\":\"master_control_missing\"}\n";
+  }
+
+  const int percent = parseFirstAudioPercent(result.output);
+  const bool muted = result.output.find("[off]") != std::string::npos;
+  std::ostringstream out;
+  out << "{";
+  out << "\"ok\":true,";
+  out << "\"available\":true,";
+  if (percent < 0) {
+    out << "\"volumePercent\":null,";
+  } else {
+    out << "\"volumePercent\":" << percent << ",";
+  }
+  out << "\"muted\":" << jsonBool(muted);
+  out << "}\n";
+  return out.str();
+}
+
+CommandResult audioAction(const std::string &action, const std::string &value) {
+  const std::string amixer = findExecutable({"/usr/bin/amixer", "/bin/amixer"});
+  if (amixer.empty()) {
+    return {0, "{\"ok\":true,\"available\":false,\"reason\":\"amixer_missing\"}\n"};
+  }
+
+  std::vector<std::string> args = {"set", "Master"};
+  if (action == "set") {
+    int percent = 0;
+    if (!parsePercent(value, &percent)) {
+      return {2, "{\"ok\":false,\"error\":\"invalid_percent\"}\n"};
+    }
+    args.push_back(std::to_string(percent) + "%");
+  } else if (action == "mute") {
+    args.push_back("mute");
+  } else if (action == "unmute") {
+    args.push_back("unmute");
+  } else if (action == "toggle") {
+    args.push_back("toggle");
+  } else {
+    return {2, "{\"ok\":false,\"error\":\"unknown_audio_action\"}\n"};
+  }
+
+  CommandResult result = runProgram(amixer, args);
+  const bool success = result.code == 0;
+  std::ostringstream out;
+  out << "{\"ok\":" << jsonBool(success) << ",\"available\":true,\"action\":\""
+      << jsonEscape(action) << "\"}\n";
+  return {success ? 0 : 1, out.str()};
+}
+
+std::string datetimeJson() {
+  std::string base = timeJson();
+  if (!base.empty() && base.back() == '\n') {
+    base.pop_back();
+  }
+  if (!base.empty() && base.back() == '}') {
+    base.pop_back();
+  }
+  base += ",\"canSet\":true,\"timezoneManaged\":false}\n";
+  return base;
+}
+
+CommandResult datetimeSet(const std::string &epochValue) {
+  long long epoch = 0;
+  if (!parseLongLong(epochValue, &epoch) || epoch <= 0) {
+    return {2, "{\"ok\":false,\"error\":\"invalid_epoch\"}\n"};
+  }
+
+  timeval tv {};
+  tv.tv_sec = static_cast<time_t>(epoch);
+  tv.tv_usec = 0;
+  const bool success = settimeofday(&tv, nullptr) == 0;
+
+  std::ostringstream out;
+  out << "{\"ok\":" << jsonBool(success) << ",\"epoch\":" << epoch;
+  if (!success) {
+    out << ",\"error\":\"settimeofday_failed\"";
+  }
+  out << "}\n";
+  return {success ? 0 : 1, out.str()};
 }
 
 // Power control plane. Chromium never calls shutdown directly: the browser
@@ -1183,6 +2049,158 @@ CommandResult handleCommand(const std::vector<std::string> &parts) {
     }
 
     return {0, timeJson()};
+  }
+
+  if (command == "network-json") {
+    if (!hasPermission(policy, "status.read")) {
+      return {1, tr("permission.denied") + "status.read\n"};
+    }
+
+    return {0, networkJson()};
+  }
+
+  if (command == "network-config-json") {
+    if (!hasPermission(policy, "status.read")) {
+      return {1, tr("permission.denied") + "status.read\n"};
+    }
+
+    return {0, networkConfigJson()};
+  }
+
+  if (command == "network") {
+    if (parts.size() < 2) {
+      return {2, "{\"ok\":false,\"error\":\"missing_network_action\"}\n"};
+    }
+    if (!hasPermission(policy, "system.network")) {
+      return {1, tr("permission.denied") + "system.network\n"};
+    }
+    if (parts[1] == "configure") {
+      return networkConfigure(parseOptions(parts, 2));
+    }
+    const std::string iface = parts.size() >= 3 ? parts[2] : "";
+    return networkAction(parts[1], iface);
+  }
+
+  if (command == "wifi-json") {
+    if (!hasPermission(policy, "status.read")) {
+      return {1, tr("permission.denied") + "status.read\n"};
+    }
+
+    return {0, wifiJson()};
+  }
+
+  if (command == "wifi-config-json") {
+    if (!hasPermission(policy, "status.read")) {
+      return {1, tr("permission.denied") + "status.read\n"};
+    }
+
+    return {0, wifiConfigJson()};
+  }
+
+  if (command == "wifi-scan-json") {
+    if (!hasPermission(policy, "status.read")) {
+      return {1, tr("permission.denied") + "status.read\n"};
+    }
+
+    return {0, wifiScanJson()};
+  }
+
+  if (command == "wifi") {
+    if (parts.size() < 2) {
+      return {2, "{\"ok\":false,\"error\":\"missing_wifi_action\"}\n"};
+    }
+    if (!hasPermission(policy, "system.wifi")) {
+      return {1, tr("permission.denied") + "system.wifi\n"};
+    }
+    if (parts[1] == "connect") {
+      return wifiConnect(parseOptions(parts, 2));
+    }
+    if (parts[1] == "forget") {
+      return wifiForget();
+    }
+    const std::string iface = parts.size() >= 3 ? parts[2] : "";
+    return wifiAction(parts[1], iface);
+  }
+
+  if (command == "battery-json") {
+    if (!hasPermission(policy, "status.read")) {
+      return {1, tr("permission.denied") + "status.read\n"};
+    }
+
+    return {0, batteryJson()};
+  }
+
+  if (command == "bluetooth-json") {
+    if (!hasPermission(policy, "status.read")) {
+      return {1, tr("permission.denied") + "status.read\n"};
+    }
+
+    return {0, bluetoothJson()};
+  }
+
+  if (command == "bluetooth") {
+    if (parts.size() < 2) {
+      return {2, "{\"ok\":false,\"error\":\"missing_bluetooth_action\"}\n"};
+    }
+    if (!hasPermission(policy, "system.bluetooth")) {
+      return {1, tr("permission.denied") + "system.bluetooth\n"};
+    }
+    return bluetoothAction(parts[1]);
+  }
+
+  if (command == "brightness-json") {
+    if (!hasPermission(policy, "status.read")) {
+      return {1, tr("permission.denied") + "status.read\n"};
+    }
+
+    return {0, brightnessJson()};
+  }
+
+  if (command == "brightness") {
+    if (parts.size() < 3 || parts[1] != "set") {
+      return {2, "{\"ok\":false,\"error\":\"invalid_brightness_command\"}\n"};
+    }
+    if (!hasPermission(policy, "system.brightness")) {
+      return {1, tr("permission.denied") + "system.brightness\n"};
+    }
+    return brightnessSet(parts[2]);
+  }
+
+  if (command == "audio-json") {
+    if (!hasPermission(policy, "status.read")) {
+      return {1, tr("permission.denied") + "status.read\n"};
+    }
+
+    return {0, audioJson()};
+  }
+
+  if (command == "audio") {
+    if (parts.size() < 2) {
+      return {2, "{\"ok\":false,\"error\":\"missing_audio_action\"}\n"};
+    }
+    if (!hasPermission(policy, "system.audio")) {
+      return {1, tr("permission.denied") + "system.audio\n"};
+    }
+    const std::string value = parts.size() >= 3 ? parts[2] : "";
+    return audioAction(parts[1], value);
+  }
+
+  if (command == "datetime-json") {
+    if (!hasPermission(policy, "status.read")) {
+      return {1, tr("permission.denied") + "status.read\n"};
+    }
+
+    return {0, datetimeJson()};
+  }
+
+  if (command == "datetime") {
+    if (parts.size() < 3 || parts[1] != "set") {
+      return {2, "{\"ok\":false,\"error\":\"invalid_datetime_command\"}\n"};
+    }
+    if (!hasPermission(policy, "system.datetime")) {
+      return {1, tr("permission.denied") + "system.datetime\n"};
+    }
+    return datetimeSet(parts[2]);
   }
 
   if (command == "power") {

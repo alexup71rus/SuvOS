@@ -127,6 +127,243 @@ bool handlePowerRoute(int fd, const std::string &method, const std::string &path
   return true;
 }
 
+std::string queryValue(const std::map<std::string, std::string> &queryValues,
+                       const std::string &key) {
+  auto item = queryValues.find(key);
+  return item == queryValues.end() ? "" : item->second;
+}
+
+std::vector<std::string> commandWithOptionalValue(const std::vector<std::string> &base,
+                                                  const std::string &value) {
+  std::vector<std::string> parts = base;
+  if (!value.empty()) {
+    parts.push_back(value);
+  }
+  return parts;
+}
+
+void appendQueryOption(std::vector<std::string> *parts,
+                       const std::map<std::string, std::string> &queryValues,
+                       const std::string &key) {
+  const std::string value = queryValue(queryValues, key);
+  if (!value.empty()) {
+    parts->push_back(key + "=" + value);
+  }
+}
+
+bool requireMethod(int fd, const std::string &method, const std::string &expected) {
+  if (method == expected) {
+    return true;
+  }
+
+  sendJson(fd, 405, "Method Not Allowed",
+           "{\"ok\":false,\"error\":\"method_not_allowed\"}\n");
+  return false;
+}
+
+bool handleSystemRoute(int fd,
+                       const std::string &method,
+                       const std::string &path,
+                       const std::map<std::string, std::string> &queryValues) {
+  if (path == "/api/system/network") {
+    if (!requireMethod(fd, method, "GET")) {
+      return true;
+    }
+    proxyJsonCommand(fd, {"network-json"});
+    return true;
+  }
+
+  if (path == "/api/system/network/config") {
+    if (!requireMethod(fd, method, "GET")) {
+      return true;
+    }
+    proxyJsonCommand(fd, {"network-config-json"});
+    return true;
+  }
+
+  if (path == "/api/system/network/configure") {
+    if (!requireMethod(fd, method, "POST")) {
+      return true;
+    }
+    std::vector<std::string> parts = {"network", "configure"};
+    appendQueryOption(&parts, queryValues, "mode");
+    appendQueryOption(&parts, queryValues, "interface");
+    appendQueryOption(&parts, queryValues, "address");
+    appendQueryOption(&parts, queryValues, "gateway");
+    appendQueryOption(&parts, queryValues, "dns");
+    proxyJsonCommand(fd, parts);
+    return true;
+  }
+
+  constexpr const char *kNetworkPrefix = "/api/system/network/";
+  if (path.rfind(kNetworkPrefix, 0) == 0) {
+    if (!requireMethod(fd, method, "POST")) {
+      return true;
+    }
+    const std::string action = path.substr(std::strlen(kNetworkPrefix));
+    proxyJsonCommand(
+        fd, commandWithOptionalValue({"network", action}, queryValue(queryValues, "interface")));
+    return true;
+  }
+
+  if (path == "/api/system/wifi") {
+    if (!requireMethod(fd, method, "GET")) {
+      return true;
+    }
+    proxyJsonCommand(fd, {"wifi-json"});
+    return true;
+  }
+
+  if (path == "/api/system/wifi/config") {
+    if (!requireMethod(fd, method, "GET")) {
+      return true;
+    }
+    proxyJsonCommand(fd, {"wifi-config-json"});
+    return true;
+  }
+
+  if (path == "/api/system/wifi/scan") {
+    if (method != "GET" && method != "POST") {
+      sendJson(fd, 405, "Method Not Allowed",
+               "{\"ok\":false,\"error\":\"method_not_allowed\"}\n");
+      return true;
+    }
+    proxyJsonCommand(fd, {"wifi-scan-json"});
+    return true;
+  }
+
+  if (path == "/api/system/wifi/connect") {
+    if (!requireMethod(fd, method, "POST")) {
+      return true;
+    }
+    const std::string ssid = queryValue(queryValues, "ssid");
+    if (ssid.empty()) {
+      sendJson(fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_ssid\"}\n");
+      return true;
+    }
+    std::vector<std::string> parts = {"wifi", "connect", "ssid=" + ssid};
+    appendQueryOption(&parts, queryValues, "psk");
+    proxyJsonCommand(fd, parts);
+    return true;
+  }
+
+  if (path == "/api/system/wifi/forget") {
+    if (!requireMethod(fd, method, "POST")) {
+      return true;
+    }
+    proxyJsonCommand(fd, {"wifi", "forget"});
+    return true;
+  }
+
+  constexpr const char *kWifiPrefix = "/api/system/wifi/";
+  if (path.rfind(kWifiPrefix, 0) == 0) {
+    if (!requireMethod(fd, method, "POST")) {
+      return true;
+    }
+    const std::string action = path.substr(std::strlen(kWifiPrefix));
+    proxyJsonCommand(
+        fd, commandWithOptionalValue({"wifi", action}, queryValue(queryValues, "interface")));
+    return true;
+  }
+
+  if (path == "/api/system/battery") {
+    if (!requireMethod(fd, method, "GET")) {
+      return true;
+    }
+    proxyJsonCommand(fd, {"battery-json"});
+    return true;
+  }
+
+  if (path == "/api/system/bluetooth") {
+    if (!requireMethod(fd, method, "GET")) {
+      return true;
+    }
+    proxyJsonCommand(fd, {"bluetooth-json"});
+    return true;
+  }
+
+  constexpr const char *kBluetoothPrefix = "/api/system/bluetooth/";
+  if (path.rfind(kBluetoothPrefix, 0) == 0) {
+    if (!requireMethod(fd, method, "POST")) {
+      return true;
+    }
+    const std::string action = path.substr(std::strlen(kBluetoothPrefix));
+    proxyJsonCommand(fd, {"bluetooth", action});
+    return true;
+  }
+
+  if (path == "/api/system/brightness") {
+    if (!requireMethod(fd, method, "GET")) {
+      return true;
+    }
+    proxyJsonCommand(fd, {"brightness-json"});
+    return true;
+  }
+
+  if (path == "/api/system/brightness/set") {
+    if (!requireMethod(fd, method, "POST")) {
+      return true;
+    }
+    const std::string percent = queryValue(queryValues, "percent");
+    if (percent.empty()) {
+      sendJson(fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_percent\"}\n");
+      return true;
+    }
+    proxyJsonCommand(fd, {"brightness", "set", percent});
+    return true;
+  }
+
+  if (path == "/api/system/audio") {
+    if (!requireMethod(fd, method, "GET")) {
+      return true;
+    }
+    proxyJsonCommand(fd, {"audio-json"});
+    return true;
+  }
+
+  constexpr const char *kAudioPrefix = "/api/system/audio/";
+  if (path.rfind(kAudioPrefix, 0) == 0) {
+    if (!requireMethod(fd, method, "POST")) {
+      return true;
+    }
+    const std::string action = path.substr(std::strlen(kAudioPrefix));
+    if (action == "set") {
+      const std::string percent = queryValue(queryValues, "percent");
+      if (percent.empty()) {
+        sendJson(fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_percent\"}\n");
+        return true;
+      }
+      proxyJsonCommand(fd, {"audio", action, percent});
+      return true;
+    }
+    proxyJsonCommand(fd, {"audio", action});
+    return true;
+  }
+
+  if (path == "/api/system/datetime") {
+    if (!requireMethod(fd, method, "GET")) {
+      return true;
+    }
+    proxyJsonCommand(fd, {"datetime-json"});
+    return true;
+  }
+
+  if (path == "/api/system/datetime/set") {
+    if (!requireMethod(fd, method, "POST")) {
+      return true;
+    }
+    const std::string epoch = queryValue(queryValues, "epoch");
+    if (epoch.empty()) {
+      sendJson(fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_epoch\"}\n");
+      return true;
+    }
+    proxyJsonCommand(fd, {"datetime", "set", epoch});
+    return true;
+  }
+
+  return false;
+}
+
 }  // namespace
 
 void handleClient(int fd) {
@@ -165,6 +402,9 @@ void handleClient(int fd) {
 
   // Power routes accept POST and must run before the GET-only guard below.
   if (handlePowerRoute(fd, method, path)) {
+    return;
+  }
+  if (handleSystemRoute(fd, method, path, queryValues)) {
     return;
   }
 
