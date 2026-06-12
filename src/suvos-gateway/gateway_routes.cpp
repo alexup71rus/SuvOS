@@ -495,6 +495,26 @@ bool handleSystemRoute(int fd,
     return true;
   }
 
+  if (path == "/api/system/input") {
+    if (!requireMethod(fd, method, "GET")) {
+      return true;
+    }
+    proxyJsonCommand(fd, {"input-json"});
+    return true;
+  }
+
+  if (path == "/api/system/input/configure") {
+    if (!requireMethod(fd, method, "POST")) {
+      return true;
+    }
+    std::vector<std::string> parts = {"input", "configure"};
+    appendQueryOption(&parts, queryValues, "languages");
+    appendQueryOption(&parts, queryValues, "current");
+    appendQueryOption(&parts, queryValues, "toggle");
+    proxyJsonCommand(fd, parts);
+    return true;
+  }
+
   if (path == "/api/system/datetime") {
     if (!requireMethod(fd, method, "GET")) {
       return true;

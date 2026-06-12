@@ -176,6 +176,21 @@ wget -q -O /tmp/suvos-http-system-render.out http://suv.os/api/system/render
 cat /tmp/suvos-http-system-render.out
 grep -q '"ok":true' /tmp/suvos-http-system-render.out
 grep -q '"renderProfile":' /tmp/suvos-http-system-render.out
+wget -q -O /tmp/suvos-http-system-input.out http://suv.os/api/system/input
+cat /tmp/suvos-http-system-input.out
+grep -q '"ok":true' /tmp/suvos-http-system-input.out
+grep -q '"languages":\["ru","en"\]' /tmp/suvos-http-system-input.out
+grep -q '"current":"ru"' /tmp/suvos-http-system-input.out
+grep -q '"xkbLayout":"ru,us"' /tmp/suvos-http-system-input.out
+wget -q -O /tmp/suvos-http-system-input-configure.out --post-data='' 'http://suv.os/api/system/input/configure?languages=ru,en&current=en&toggle=ctrl_shift'
+cat /tmp/suvos-http-system-input-configure.out
+grep -q '"ok":true' /tmp/suvos-http-system-input-configure.out
+grep -q '"runtimeApply":"restart-gui-required"' /tmp/suvos-http-system-input-configure.out
+wget -q -O /tmp/suvos-http-system-input-after.out http://suv.os/api/system/input
+cat /tmp/suvos-http-system-input-after.out
+grep -q '"current":"en"' /tmp/suvos-http-system-input-after.out
+grep -q '"xkbLayout":"us,ru"' /tmp/suvos-http-system-input-after.out
+grep -q '"xkbOptions":"grp:ctrl_shift_toggle"' /tmp/suvos-http-system-input-after.out
 wget -q -O /tmp/suvos-http-system-display-configure.out --post-data='' 'http://suv.os/api/system/display/configure?width=1024&height=768&scale=1&orientation=normal'
 cat /tmp/suvos-http-system-display-configure.out
 grep -q '"ok":true' /tmp/suvos-http-system-display-configure.out

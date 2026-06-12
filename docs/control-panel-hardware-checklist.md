@@ -76,6 +76,18 @@ passed-through hardware.
 - Verify `/api/system/render` includes the requested `renderProfile`,
   `/dev/dri` devices, framebuffer state, and loaded DRM/GPU modules.
 
+## Input Language
+
+- Verify `/api/system/input` reports default `languages:["ru","en"]`,
+  `current:"ru"`, XKB layout `ru,us`, and `grp:alt_shift_toggle`.
+- Change input through `/api/system/input/configure` with `languages=ru,en`,
+  `current=ru|en`, and `toggle=alt_shift|ctrl_shift|caps|none`.
+- Restart the GUI shell after changing input config. `suvos-start-gui` reads
+  `/data/suvos/input/input.conf` and exports `XKB_DEFAULT_LAYOUT` plus
+  `XKB_DEFAULT_OPTIONS` before starting Cage/Chromium.
+- In GUI logs, check `suvos-gui: input languages` and `suvos-gui: xkb layout`
+  to confirm Chromium is inheriting the system input settings.
+
 ## Power
 
 - Verify `/api/system/power` reports battery supplies and saved power settings.

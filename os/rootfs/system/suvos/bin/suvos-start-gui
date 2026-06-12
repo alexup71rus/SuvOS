@@ -41,6 +41,65 @@ cmdline_value() {
   return 0
 }
 
+input_config_value() {
+  key="$1"
+  [ -r /data/suvos/input/input.conf ] || return 0
+  sed -n "s/^$key=//p" /data/suvos/input/input.conf | sed -n '1p'
+}
+
+xkb_layout_for_language() {
+  case "$1" in
+    en) printf 'us' ;;
+    ru) printf 'ru' ;;
+    *) printf '%s' "$1" ;;
+  esac
+}
+
+input_languages_to_xkb_layouts() {
+  languages="$1"
+  current="$2"
+  output="$current"
+  old_ifs="$IFS"
+  IFS=,
+  for language in $languages; do
+    [ -n "$language" ] || continue
+    case ",$output," in
+      *",$language,"*) ;;
+      *)
+        if [ -n "$output" ]; then
+          output="$output,$language"
+        else
+          output="$language"
+        fi
+        ;;
+    esac
+  done
+  IFS="$old_ifs"
+
+  xkb_output=""
+  old_ifs="$IFS"
+  IFS=,
+  for language in $output; do
+    layout="$(xkb_layout_for_language "$language")"
+    if [ -n "$xkb_output" ]; then
+      xkb_output="$xkb_output,$layout"
+    else
+      xkb_output="$layout"
+    fi
+  done
+  IFS="$old_ifs"
+  printf '%s\n' "$xkb_output"
+}
+
+xkb_options_for_toggle() {
+  case "$1" in
+    ctrl_shift) printf 'grp:ctrl_shift_toggle' ;;
+    caps) printf 'grp:caps_toggle' ;;
+    none) printf '' ;;
+    *) printf 'grp:alt_shift_toggle' ;;
+  esac
+}
+
 chromium_artifact_vendor() {
   build_info=/usr/share/doc/suvos-chromium/build-info.txt
   [ -r "$build_info" ] || return 0
@@ -172,6 +231,17 @@ export WLR_NO_HARDWARE_CURSORS="${WLR_NO_HARDWARE_CURSORS:-1}"
 export XCURSOR_THEME="${SUVOS_CURSOR_THEME:-${XCURSOR_THEME:-Adwaita}}"
 export XCURSOR_SIZE="${SUVOS_CURSOR_SIZE:-${XCURSOR_SIZE:-24}}"
 export XCURSOR_PATH="${XCURSOR_PATH:-/usr/share/icons:/usr/share/pixmaps}"
+
+SUVOS_INPUT_LANGUAGES="${SUVOS_INPUT_LANGUAGES:-$(input_config_value languages)}"
+[ -n "$SUVOS_INPUT_LANGUAGES" ] || SUVOS_INPUT_LANGUAGES=ru,en
+SUVOS_INPUT_CURRENT="${SUVOS_INPUT_CURRENT:-$(input_config_value current)}"
+[ -n "$SUVOS_INPUT_CURRENT" ] || SUVOS_INPUT_CURRENT=ru
+SUVOS_INPUT_TOGGLE="${SUVOS_INPUT_TOGGLE:-$(input_config_value toggle)}"
+[ -n "$SUVOS_INPUT_TOGGLE" ] || SUVOS_INPUT_TOGGLE=alt_shift
+export XKB_DEFAULT_MODEL="${XKB_DEFAULT_MODEL:-pc105}"
+export XKB_DEFAULT_LAYOUT="${XKB_DEFAULT_LAYOUT:-$(input_languages_to_xkb_layouts "$SUVOS_INPUT_LANGUAGES" "$SUVOS_INPUT_CURRENT")}"
+export XKB_DEFAULT_VARIANT="${XKB_DEFAULT_VARIANT:-}"
+export XKB_DEFAULT_OPTIONS="${XKB_DEFAULT_OPTIONS:-$(xkb_options_for_toggle "$SUVOS_INPUT_TOGGLE")}"
 
 SUVOS_LANG="${SUVOS_LANG:-ru}"
 case "${SUVOS_LANG%%_*}" in
@@ -447,6 +517,8 @@ echo "suvos-gui: urls=$SUVOS_GUI_URLS"
 echo "suvos-gui: chromium artifact vendor: ${CHROMIUM_ARTIFACT_VENDOR:-unknown}"
 echo "suvos-gui: chromium gl mode: $CHROMIUM_GL_MODE"
 echo "suvos-gui: language: ${SUVOS_LANG:-ru} (LANG=$LANG)"
+echo "suvos-gui: input languages: $SUVOS_INPUT_LANGUAGES current=$SUVOS_INPUT_CURRENT toggle=$SUVOS_INPUT_TOGGLE"
+echo "suvos-gui: xkb layout: ${XKB_DEFAULT_LAYOUT:-} options=${XKB_DEFAULT_OPTIONS:-}"
 echo "suvos-gui: wlroots renderer: ${WLR_RENDERER:-auto}"
 printf 'suvos-gui: chromium argv:'
 for arg in "$@"; do

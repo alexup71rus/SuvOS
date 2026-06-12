@@ -51,6 +51,8 @@ constexpr const char *kWifiSupplicantConfigPath = "/data/suvos/network/wpa_suppl
 constexpr const char *kWifiSupplicantPidPath = "/run/suvosd/wpa_supplicant.pid";
 constexpr const char *kTimeStateDir = "/data/suvos/time";
 constexpr const char *kTimeConfigPath = "/data/suvos/time/time.conf";
+constexpr const char *kInputStateDir = "/data/suvos/input";
+constexpr const char *kInputConfigPath = "/data/suvos/input/input.conf";
 constexpr const char *kDisplayStateDir = "/data/suvos/display";
 constexpr const char *kDisplayConfigPath = "/data/suvos/display/display.conf";
 constexpr const char *kPowerStateDir = "/data/suvos/power";
@@ -3341,6 +3343,163 @@ CommandResult datetimeSetNtp(const std::map<std::string, std::string> &options) 
   return {0, out.str()};
 }
 
+bool ensureInputStateDir() {
+  ensureDir(kDataRoot, 0755);
+  return ensureDir(kInputStateDir, 0700);
+}
+
+std::vector<std::string> defaultInputLanguages() {
+  return {"ru", "en"};
+}
+
+bool validInputLanguage(const std::string &value) {
+  return value == "ru" || value == "en";
+}
+
+bool validInputToggle(const std::string &value) {
+  return value == "alt_shift" || value == "ctrl_shift" ||
+         value == "caps" || value == "none";
+}
+
+std::vector<std::string> configuredInputLanguages(const std::map<std::string, std::string> &config) {
+  std::vector<std::string> values;
+  for (const auto &item : splitList(optionValue(config, "languages"))) {
+    if (validInputLanguage(item) &&
+        std::find(values.begin(), values.end(), item) == values.end()) {
+      values.push_back(item);
+    }
+  }
+  if (values.empty()) {
+    values = defaultInputLanguages();
+  }
+  return values;
+}
+
+std::string configuredInputCurrent(const std::map<std::string, std::string> &config,
+                                   const std::vector<std::string> &languages) {
+  const std::string current = optionValue(config, "current");
+  if (validInputLanguage(current) &&
+      std::find(languages.begin(), languages.end(), current) != languages.end()) {
+    return current;
+  }
+  return languages.empty() ? "ru" : languages[0];
+}
+
+std::string configuredInputToggle(const std::map<std::string, std::string> &config) {
+  const std::string toggle = optionValue(config, "toggle");
+  return validInputToggle(toggle) ? toggle : "alt_shift";
+}
+
+std::string xkbLayoutForLanguage(const std::string &language) {
+  return language == "en" ? "us" : language;
+}
+
+std::string xkbOptionsForToggle(const std::string &toggle) {
+  if (toggle == "ctrl_shift") return "grp:ctrl_shift_toggle";
+  if (toggle == "caps") return "grp:caps_toggle";
+  if (toggle == "none") return "";
+  return "grp:alt_shift_toggle";
+}
+
+std::vector<std::string> orderedInputLanguages(const std::vector<std::string> &languages,
+                                               const std::string &current) {
+  std::vector<std::string> ordered;
+  if (std::find(languages.begin(), languages.end(), current) != languages.end()) {
+    ordered.push_back(current);
+  }
+  for (const auto &language : languages) {
+    if (std::find(ordered.begin(), ordered.end(), language) == ordered.end()) {
+      ordered.push_back(language);
+    }
+  }
+  return ordered;
+}
+
+std::string joinComma(const std::vector<std::string> &values) {
+  std::ostringstream out;
+  for (size_t i = 0; i < values.size(); ++i) {
+    if (i > 0) {
+      out << ",";
+    }
+    out << values[i];
+  }
+  return out.str();
+}
+
+std::string inputJson() {
+  auto config = parseKeyValueFile(kInputConfigPath);
+  const bool configured = !config.empty();
+  const auto languages = configuredInputLanguages(config);
+  const std::string current = configuredInputCurrent(config, languages);
+  const std::string toggle = configuredInputToggle(config);
+  const auto ordered = orderedInputLanguages(languages, current);
+  std::vector<std::string> xkbLayouts;
+  for (const auto &language : ordered) {
+    xkbLayouts.push_back(xkbLayoutForLanguage(language));
+  }
+
+  std::ostringstream out;
+  out << "{\"ok\":true,\"configured\":" << jsonBool(configured) << ",";
+  out << "\"languages\":";
+  appendJsonStringArray(&out, languages);
+  out << ",\"current\":\"" << jsonEscape(current) << "\",";
+  out << "\"toggle\":\"" << jsonEscape(toggle) << "\",";
+  out << "\"xkbLayout\":\"" << jsonEscape(joinComma(xkbLayouts)) << "\",";
+  out << "\"xkbOptions\":\"" << jsonEscape(xkbOptionsForToggle(toggle)) << "\",";
+  out << "\"runtimeApply\":\"restart-gui-required\"";
+  out << "}\n";
+  return out.str();
+}
+
+CommandResult inputConfigure(const std::map<std::string, std::string> &options) {
+  std::vector<std::string> languages;
+  const std::string languagesValue = optionValue(options, "languages").empty()
+      ? "ru,en"
+      : optionValue(options, "languages");
+  for (const auto &item : splitList(languagesValue)) {
+    if (!validInputLanguage(item) ||
+        std::find(languages.begin(), languages.end(), item) != languages.end()) {
+      return {2, "{\"ok\":false,\"error\":\"invalid_input_languages\"}\n"};
+    }
+    languages.push_back(item);
+  }
+  if (languages.empty()) {
+    return {2, "{\"ok\":false,\"error\":\"invalid_input_languages\"}\n"};
+  }
+
+  const std::string current = optionValue(options, "current").empty()
+      ? languages[0]
+      : optionValue(options, "current");
+  const std::string toggle = optionValue(options, "toggle").empty()
+      ? "alt_shift"
+      : optionValue(options, "toggle");
+  if (!validInputLanguage(current) ||
+      std::find(languages.begin(), languages.end(), current) == languages.end() ||
+      !validInputToggle(toggle)) {
+    return {2, "{\"ok\":false,\"error\":\"invalid_input_config\"}\n"};
+  }
+  if (!ensureInputStateDir()) {
+    return {1, "{\"ok\":false,\"error\":\"input_state_unavailable\"}\n"};
+  }
+
+  std::ostringstream data;
+  data << "languages=" << joinComma(languages) << "\n";
+  data << "current=" << current << "\n";
+  data << "toggle=" << toggle << "\n";
+  if (!writeFile(kInputConfigPath, data.str(), 0600)) {
+    return {1, "{\"ok\":false,\"error\":\"input_config_write_failed\"}\n"};
+  }
+
+  std::ostringstream out;
+  out << "{\"ok\":true,\"configured\":true,\"applied\":false,"
+      << "\"runtimeApply\":\"restart-gui-required\",";
+  out << "\"languages\":";
+  appendJsonStringArray(&out, languages);
+  out << ",\"current\":\"" << jsonEscape(current)
+      << "\",\"toggle\":\"" << jsonEscape(toggle) << "\"}\n";
+  return {0, out.str()};
+}
+
 long long nowEpoch() {
   return static_cast<long long>(std::time(nullptr));
 }
@@ -4817,6 +4976,26 @@ CommandResult handleCommand(const std::vector<std::string> &parts) {
     }
 
     return {0, ntpStatusJson()};
+  }
+
+  if (command == "input-json") {
+    if (!hasPermission(policy, "system.input")) {
+      return {1, tr("permission.denied") + "system.input\n"};
+    }
+    return {0, inputJson()};
+  }
+
+  if (command == "input") {
+    if (parts.size() < 2) {
+      return {2, "{\"ok\":false,\"error\":\"missing_input_action\"}\n"};
+    }
+    if (!hasPermission(policy, "system.input")) {
+      return {1, tr("permission.denied") + "system.input\n"};
+    }
+    if (parts[1] == "configure") {
+      return inputConfigure(parseOptions(parts, 2));
+    }
+    return {2, "{\"ok\":false,\"error\":\"unknown_input_action\"}\n"};
   }
 
   if (command == "notifications-json") {
