@@ -129,6 +129,85 @@ if wget -q -O /tmp/suvos-http-system-datetime-invalid.out --post-data='' 'http:/
   echo "invalid datetime epoch was accepted"
   exit 1
 fi
+wget -q -O /tmp/suvos-http-notifications-clear-start.out --post-data='' http://suv.os/api/notifications/clear
+cat /tmp/suvos-http-notifications-clear-start.out
+grep -q '"ok":true' /tmp/suvos-http-notifications-clear-start.out
+wget -q -O /tmp/suvos-http-calendar-clear-start.out --post-data='' http://suv.os/api/calendar/events/clear
+cat /tmp/suvos-http-calendar-clear-start.out
+grep -q '"ok":true' /tmp/suvos-http-calendar-clear-start.out
+wget -q -O /tmp/suvos-http-notification-create.out --post-data='' 'http://suv.os/api/notifications/create?source=system&origin=suvos.system&type=info&title=ManualNotice&body=Hello'
+cat /tmp/suvos-http-notification-create.out
+grep -q '"ok":true' /tmp/suvos-http-notification-create.out
+grep -q '"title":"ManualNotice"' /tmp/suvos-http-notification-create.out
+notification_id="$(sed -n 's/.*"id":"\([^"]*\)".*/\1/p' /tmp/suvos-http-notification-create.out)"
+test -n "$notification_id"
+wget -q -O /tmp/suvos-http-notification-list.out 'http://suv.os/api/notifications?source=system&sort=created&order=desc&limit=5'
+cat /tmp/suvos-http-notification-list.out
+grep -q '"ok":true' /tmp/suvos-http-notification-list.out
+grep -q '"notifications":' /tmp/suvos-http-notification-list.out
+grep -q '"ManualNotice"' /tmp/suvos-http-notification-list.out
+wget -q -O /tmp/suvos-http-notification-get.out "http://suv.os/api/notifications?id=$notification_id"
+cat /tmp/suvos-http-notification-get.out
+grep -q '"count":1' /tmp/suvos-http-notification-get.out
+grep -q "\"id\":\"$notification_id\"" /tmp/suvos-http-notification-get.out
+wget -q -O /tmp/suvos-http-notification-update.out --post-data='' "http://suv.os/api/notifications/update?id=$notification_id&body=UpdatedBody"
+cat /tmp/suvos-http-notification-update.out
+grep -q '"ok":true' /tmp/suvos-http-notification-update.out
+grep -q '"body":"UpdatedBody"' /tmp/suvos-http-notification-update.out
+wget -q -O /tmp/suvos-http-notification-read.out --post-data='' "http://suv.os/api/notifications/read?id=$notification_id"
+cat /tmp/suvos-http-notification-read.out
+grep -q '"ok":true' /tmp/suvos-http-notification-read.out
+grep -q '"status":"read"' /tmp/suvos-http-notification-read.out
+wget -q -O /tmp/suvos-http-notification-dismiss.out --post-data='' "http://suv.os/api/notifications/dismiss?id=$notification_id"
+cat /tmp/suvos-http-notification-dismiss.out
+grep -q '"ok":true' /tmp/suvos-http-notification-dismiss.out
+grep -q '"status":"dismissed"' /tmp/suvos-http-notification-dismiss.out
+wget -q -O /tmp/suvos-http-notification-delete.out --post-data='' "http://suv.os/api/notifications/delete?id=$notification_id"
+cat /tmp/suvos-http-notification-delete.out
+grep -q '"ok":true' /tmp/suvos-http-notification-delete.out
+grep -q '"deleted":1' /tmp/suvos-http-notification-delete.out
+now_epoch="$(date +%s)"
+due_epoch=$((now_epoch - 5))
+wget -q -O /tmp/suvos-http-calendar-create.out --post-data='' "http://suv.os/api/calendar/events/create?source=calendar&origin=suvos.calendar&type=goal&title=DailyGoal&description=DoThing&startEpoch=$due_epoch&endEpoch=$due_epoch"
+cat /tmp/suvos-http-calendar-create.out
+grep -q '"ok":true' /tmp/suvos-http-calendar-create.out
+grep -q '"title":"DailyGoal"' /tmp/suvos-http-calendar-create.out
+event_id="$(sed -n 's/.*"id":"\([^"]*\)".*/\1/p' /tmp/suvos-http-calendar-create.out)"
+test -n "$event_id"
+wget -q -O /tmp/suvos-http-calendar-update.out --post-data='' "http://suv.os/api/calendar/events/update?id=$event_id&meta=priority-high"
+cat /tmp/suvos-http-calendar-update.out
+grep -q '"ok":true' /tmp/suvos-http-calendar-update.out
+grep -q '"meta":"priority-high"' /tmp/suvos-http-calendar-update.out
+wget -q -O /tmp/suvos-http-calendar-list.out 'http://suv.os/api/calendar/events?status=active&passed=true&sort=start&order=desc'
+cat /tmp/suvos-http-calendar-list.out
+grep -q '"ok":true' /tmp/suvos-http-calendar-list.out
+grep -q '"events":' /tmp/suvos-http-calendar-list.out
+grep -q '"title":"DailyGoal"' /tmp/suvos-http-calendar-list.out
+grep -q '"passed":true' /tmp/suvos-http-calendar-list.out
+grep -q '"editable":false' /tmp/suvos-http-calendar-list.out
+wget -q -O /tmp/suvos-http-calendar-get.out "http://suv.os/api/calendar/events?id=$event_id"
+cat /tmp/suvos-http-calendar-get.out
+grep -q '"count":1' /tmp/suvos-http-calendar-get.out
+grep -q "\"id\":\"$event_id\"" /tmp/suvos-http-calendar-get.out
+wget -q -O /tmp/suvos-http-calendar-notification.out 'http://suv.os/api/notifications?source=calendar&type=goal&status=unread'
+cat /tmp/suvos-http-calendar-notification.out
+grep -q '"ok":true' /tmp/suvos-http-calendar-notification.out
+grep -q '"title":"DailyGoal"' /tmp/suvos-http-calendar-notification.out
+grep -q "\"eventId\":\"$event_id\"" /tmp/suvos-http-calendar-notification.out
+wget -q -O /tmp/suvos-http-calendar-complete.out --post-data='' "http://suv.os/api/calendar/events/complete?id=$event_id"
+cat /tmp/suvos-http-calendar-complete.out
+grep -q '"ok":true' /tmp/suvos-http-calendar-complete.out
+grep -q '"status":"completed"' /tmp/suvos-http-calendar-complete.out
+wget -q -O /tmp/suvos-http-calendar-delete.out --post-data='' "http://suv.os/api/calendar/events/delete?id=$event_id"
+cat /tmp/suvos-http-calendar-delete.out
+grep -q '"ok":true' /tmp/suvos-http-calendar-delete.out
+grep -q '"deleted":1' /tmp/suvos-http-calendar-delete.out
+wget -q -O /tmp/suvos-http-notifications-clear-calendar.out --post-data='' 'http://suv.os/api/notifications/clear?source=calendar'
+cat /tmp/suvos-http-notifications-clear-calendar.out
+grep -q '"ok":true' /tmp/suvos-http-notifications-clear-calendar.out
+wget -q -O /tmp/suvos-http-notifications-empty.out 'http://suv.os/api/notifications?source=calendar'
+cat /tmp/suvos-http-notifications-empty.out
+grep -q '"count":0' /tmp/suvos-http-notifications-empty.out
 wget -q -O /tmp/suvos-http-roles.out http://suv.os/api/roles
 cat /tmp/suvos-http-roles.out
 grep -q '"currentRole":"setup"' /tmp/suvos-http-roles.out

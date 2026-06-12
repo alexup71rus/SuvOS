@@ -44,6 +44,10 @@ constexpr const char *kSessionAuthFile = "/run/suvosd/session.auth";
 constexpr const char *kNetworkStateDir = "/data/suvos/network";
 constexpr const char *kNetworkConfigPath = "/data/suvos/network/network.conf";
 constexpr const char *kWifiConfigPath = "/data/suvos/network/wifi.conf";
+constexpr const char *kNotificationsDir = "/data/suvos/notifications";
+constexpr const char *kNotificationsPath = "/data/suvos/notifications/notifications.tsv";
+constexpr const char *kCalendarDir = "/data/suvos/calendar";
+constexpr const char *kCalendarEventsPath = "/data/suvos/calendar/events.tsv";
 constexpr const char *kExitPrefix = "__SUVOSD_EXIT__:";
 constexpr int kResponseOpenRetries = 200;
 constexpr int kResponseOpenSleepMicros = 10000;
@@ -1946,6 +1950,886 @@ CommandResult datetimeSet(const std::string &epochValue) {
   return {success ? 0 : 1, out.str()};
 }
 
+long long nowEpoch() {
+  return static_cast<long long>(std::time(nullptr));
+}
+
+std::string generatedId(const std::string &prefix) {
+  timeval tv {};
+  gettimeofday(&tv, nullptr);
+  std::ostringstream out;
+  out << prefix << "-" << tv.tv_sec << "-" << tv.tv_usec << "-" << getpid();
+  return out.str();
+}
+
+bool validRecordId(const std::string &value) {
+  return validName(value) && value.size() <= 96;
+}
+
+std::string normalizedValue(const std::map<std::string, std::string> &options,
+                            const std::string &key,
+                            const std::string &fallback,
+                            size_t maxSize) {
+  const std::string value = optionValue(options, key);
+  if (value.empty()) {
+    return fallback;
+  }
+  if (!validConfigValue(value, maxSize)) {
+    return "";
+  }
+  return value;
+}
+
+bool optionBool(const std::string &value, bool fallback) {
+  if (value == "true" || value == "1" || value == "yes" || value == "on") {
+    return true;
+  }
+  if (value == "false" || value == "0" || value == "no" || value == "off") {
+    return false;
+  }
+  return fallback;
+}
+
+bool parseOptionalEpoch(const std::map<std::string, std::string> &options,
+                        const std::string &key,
+                        long long fallback,
+                        long long *out) {
+  const std::string value = optionValue(options, key);
+  if (value.empty()) {
+    *out = fallback;
+    return true;
+  }
+  return parseLongLong(value, out);
+}
+
+bool parseOptionalLimit(const std::map<std::string, std::string> &options,
+                        size_t fallback,
+                        size_t *out) {
+  long long parsed = 0;
+  const std::string value = optionValue(options, "limit");
+  if (value.empty()) {
+    *out = fallback;
+    return true;
+  }
+  if (!parseLongLong(value, &parsed) || parsed < 0 || parsed > 1000) {
+    return false;
+  }
+  *out = static_cast<size_t>(parsed);
+  return true;
+}
+
+struct NotificationRecord {
+  std::string id;
+  long long createdEpoch = 0;
+  long long updatedEpoch = 0;
+  long long timeEpoch = 0;
+  std::string source;
+  std::string origin;
+  std::string appId;
+  std::string siteUrl;
+  std::string type;
+  std::string status;
+  std::string title;
+  std::string body;
+  std::string eventId;
+  std::string meta;
+};
+
+struct CalendarEventRecord {
+  std::string id;
+  long long createdEpoch = 0;
+  long long updatedEpoch = 0;
+  long long startEpoch = 0;
+  long long endEpoch = 0;
+  std::string source;
+  std::string origin;
+  std::string type;
+  std::string status;
+  std::string title;
+  std::string description;
+  std::string meta;
+  std::string notificationId;
+};
+
+bool validNotificationStatus(const std::string &status) {
+  return status == "unread" || status == "read" || status == "dismissed";
+}
+
+bool validEventStatus(const std::string &status) {
+  return status == "active" || status == "completed" || status == "cancelled";
+}
+
+bool validShortToken(const std::string &value, bool allowEmpty) {
+  if (value.empty()) {
+    return allowEmpty;
+  }
+  if (value.size() > 128 || hasControlChar(value)) {
+    return false;
+  }
+  for (char ch : value) {
+    const bool allowed = (ch >= 'A' && ch <= 'Z') ||
+                         (ch >= 'a' && ch <= 'z') ||
+                         (ch >= '0' && ch <= '9') ||
+                         ch == '_' || ch == '-' || ch == '.' || ch == ':' || ch == '/';
+    if (!allowed) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool validTextField(const std::string &value, size_t maxSize, bool allowEmpty) {
+  if (value.empty()) {
+    return allowEmpty;
+  }
+  return validConfigValue(value, maxSize);
+}
+
+bool ensureNotificationsDir() {
+  ensureDir(kDataRoot, 0755);
+  return ensureDir(kNotificationsDir, 0700);
+}
+
+bool ensureCalendarDir() {
+  ensureDir(kDataRoot, 0755);
+  return ensureDir(kCalendarDir, 0700);
+}
+
+std::vector<NotificationRecord> readNotifications() {
+  std::vector<NotificationRecord> records;
+  std::ifstream file(kNotificationsPath);
+  std::string line;
+  while (std::getline(file, line)) {
+    auto fields = split(line, '\t');
+    if (fields.size() < 14) {
+      continue;
+    }
+
+    NotificationRecord record;
+    record.id = fields[0];
+    parseLongLong(fields[1], &record.createdEpoch);
+    parseLongLong(fields[2], &record.updatedEpoch);
+    parseLongLong(fields[3], &record.timeEpoch);
+    record.source = fields[4];
+    record.origin = fields[5];
+    record.appId = fields[6];
+    record.siteUrl = fields[7];
+    record.type = fields[8];
+    record.status = fields[9];
+    record.title = fields[10];
+    record.body = fields[11];
+    record.eventId = fields[12];
+    record.meta = fields[13];
+
+    if (validRecordId(record.id) && validNotificationStatus(record.status)) {
+      records.push_back(record);
+    }
+  }
+  return records;
+}
+
+bool writeNotifications(const std::vector<NotificationRecord> &records) {
+  if (!ensureNotificationsDir()) {
+    return false;
+  }
+
+  std::ostringstream out;
+  for (const auto &record : records) {
+    out << record.id << '\t'
+        << record.createdEpoch << '\t'
+        << record.updatedEpoch << '\t'
+        << record.timeEpoch << '\t'
+        << record.source << '\t'
+        << record.origin << '\t'
+        << record.appId << '\t'
+        << record.siteUrl << '\t'
+        << record.type << '\t'
+        << record.status << '\t'
+        << record.title << '\t'
+        << record.body << '\t'
+        << record.eventId << '\t'
+        << record.meta << '\n';
+  }
+  return writeFile(kNotificationsPath, out.str(), 0600);
+}
+
+std::vector<CalendarEventRecord> readCalendarEvents() {
+  std::vector<CalendarEventRecord> records;
+  std::ifstream file(kCalendarEventsPath);
+  std::string line;
+  while (std::getline(file, line)) {
+    auto fields = split(line, '\t');
+    if (fields.size() < 13) {
+      continue;
+    }
+
+    CalendarEventRecord record;
+    record.id = fields[0];
+    parseLongLong(fields[1], &record.createdEpoch);
+    parseLongLong(fields[2], &record.updatedEpoch);
+    parseLongLong(fields[3], &record.startEpoch);
+    parseLongLong(fields[4], &record.endEpoch);
+    record.source = fields[5];
+    record.origin = fields[6];
+    record.type = fields[7];
+    record.status = fields[8];
+    record.title = fields[9];
+    record.description = fields[10];
+    record.meta = fields[11];
+    record.notificationId = fields[12];
+
+    if (validRecordId(record.id) && validEventStatus(record.status)) {
+      records.push_back(record);
+    }
+  }
+  return records;
+}
+
+bool writeCalendarEvents(const std::vector<CalendarEventRecord> &records) {
+  if (!ensureCalendarDir()) {
+    return false;
+  }
+
+  std::ostringstream out;
+  for (const auto &record : records) {
+    out << record.id << '\t'
+        << record.createdEpoch << '\t'
+        << record.updatedEpoch << '\t'
+        << record.startEpoch << '\t'
+        << record.endEpoch << '\t'
+        << record.source << '\t'
+        << record.origin << '\t'
+        << record.type << '\t'
+        << record.status << '\t'
+        << record.title << '\t'
+        << record.description << '\t'
+        << record.meta << '\t'
+        << record.notificationId << '\n';
+  }
+  return writeFile(kCalendarEventsPath, out.str(), 0600);
+}
+
+bool notificationMatches(const NotificationRecord &record,
+                         const std::map<std::string, std::string> &filters) {
+  const std::string id = optionValue(filters, "id");
+  const std::string source = optionValue(filters, "source");
+  const std::string origin = optionValue(filters, "origin");
+  const std::string appId = optionValue(filters, "appId");
+  const std::string siteUrl = optionValue(filters, "siteUrl");
+  const std::string type = optionValue(filters, "type");
+  const std::string status = optionValue(filters, "status");
+  const std::string eventId = optionValue(filters, "eventId");
+  long long from = 0;
+  long long to = 0;
+  parseLongLong(optionValue(filters, "from"), &from);
+  parseLongLong(optionValue(filters, "to"), &to);
+  const long long time = record.timeEpoch > 0 ? record.timeEpoch : record.createdEpoch;
+
+  return (id.empty() || record.id == id) &&
+         (source.empty() || record.source == source) &&
+         (origin.empty() || record.origin == origin) &&
+         (appId.empty() || record.appId == appId) &&
+         (siteUrl.empty() || record.siteUrl == siteUrl) &&
+         (type.empty() || record.type == type) &&
+         (status.empty() || record.status == status) &&
+         (eventId.empty() || record.eventId == eventId) &&
+         (from <= 0 || time >= from) &&
+         (to <= 0 || time <= to);
+}
+
+bool calendarEventMatches(const CalendarEventRecord &record,
+                          const std::map<std::string, std::string> &filters,
+                          long long now) {
+  const std::string id = optionValue(filters, "id");
+  const std::string source = optionValue(filters, "source");
+  const std::string origin = optionValue(filters, "origin");
+  const std::string type = optionValue(filters, "type");
+  const std::string status = optionValue(filters, "status");
+  const std::string passed = optionValue(filters, "passed");
+  long long from = 0;
+  long long to = 0;
+  parseLongLong(optionValue(filters, "from"), &from);
+  parseLongLong(optionValue(filters, "to"), &to);
+  const bool isPassed = record.startEpoch <= now;
+
+  return (id.empty() || record.id == id) &&
+         (source.empty() || record.source == source) &&
+         (origin.empty() || record.origin == origin) &&
+         (type.empty() || record.type == type) &&
+         (status.empty() || record.status == status) &&
+         (passed.empty() || optionBool(passed, false) == isPassed) &&
+         (from <= 0 || record.startEpoch >= from) &&
+         (to <= 0 || record.startEpoch <= to);
+}
+
+long long notificationSortEpoch(const NotificationRecord &record,
+                                const std::string &sortKey) {
+  if (sortKey == "updated") {
+    return record.updatedEpoch;
+  }
+  if (sortKey == "time" || sortKey == "timeEpoch") {
+    return record.timeEpoch > 0 ? record.timeEpoch : record.createdEpoch;
+  }
+  return record.createdEpoch;
+}
+
+long long eventSortEpoch(const CalendarEventRecord &record,
+                         const std::string &sortKey) {
+  if (sortKey == "created") {
+    return record.createdEpoch;
+  }
+  if (sortKey == "updated") {
+    return record.updatedEpoch;
+  }
+  if (sortKey == "end" || sortKey == "endEpoch") {
+    return record.endEpoch;
+  }
+  return record.startEpoch;
+}
+
+void sortNotifications(std::vector<NotificationRecord> *records,
+                       const std::map<std::string, std::string> &filters) {
+  const std::string sortKey = optionValue(filters, "sort").empty()
+      ? "created"
+      : optionValue(filters, "sort");
+  const bool desc = optionValue(filters, "order") == "desc";
+  std::sort(records->begin(), records->end(), [&](const auto &left, const auto &right) {
+    int cmp = 0;
+    if (sortKey == "source") {
+      cmp = left.source.compare(right.source);
+    } else if (sortKey == "origin") {
+      cmp = left.origin.compare(right.origin);
+    } else if (sortKey == "type") {
+      cmp = left.type.compare(right.type);
+    } else if (sortKey == "status") {
+      cmp = left.status.compare(right.status);
+    } else {
+      const long long a = notificationSortEpoch(left, sortKey);
+      const long long b = notificationSortEpoch(right, sortKey);
+      cmp = a < b ? -1 : (a > b ? 1 : 0);
+    }
+    if (cmp == 0) {
+      cmp = left.id.compare(right.id);
+    }
+    return desc ? cmp > 0 : cmp < 0;
+  });
+}
+
+void sortCalendarEvents(std::vector<CalendarEventRecord> *records,
+                        const std::map<std::string, std::string> &filters) {
+  const std::string sortKey = optionValue(filters, "sort").empty()
+      ? "start"
+      : optionValue(filters, "sort");
+  const bool desc = optionValue(filters, "order") == "desc";
+  std::sort(records->begin(), records->end(), [&](const auto &left, const auto &right) {
+    int cmp = 0;
+    if (sortKey == "title") {
+      cmp = left.title.compare(right.title);
+    } else if (sortKey == "source") {
+      cmp = left.source.compare(right.source);
+    } else if (sortKey == "status") {
+      cmp = left.status.compare(right.status);
+    } else {
+      const long long a = eventSortEpoch(left, sortKey);
+      const long long b = eventSortEpoch(right, sortKey);
+      cmp = a < b ? -1 : (a > b ? 1 : 0);
+    }
+    if (cmp == 0) {
+      cmp = left.id.compare(right.id);
+    }
+    return desc ? cmp > 0 : cmp < 0;
+  });
+}
+
+std::string notificationToJson(const NotificationRecord &record) {
+  std::ostringstream out;
+  out << "{";
+  out << "\"id\":\"" << jsonEscape(record.id) << "\",";
+  out << "\"createdEpoch\":" << record.createdEpoch << ",";
+  out << "\"updatedEpoch\":" << record.updatedEpoch << ",";
+  out << "\"timeEpoch\":" << record.timeEpoch << ",";
+  out << "\"source\":\"" << jsonEscape(record.source) << "\",";
+  out << "\"origin\":\"" << jsonEscape(record.origin) << "\",";
+  out << "\"appId\":\"" << jsonEscape(record.appId) << "\",";
+  out << "\"siteUrl\":\"" << jsonEscape(record.siteUrl) << "\",";
+  out << "\"type\":\"" << jsonEscape(record.type) << "\",";
+  out << "\"status\":\"" << jsonEscape(record.status) << "\",";
+  out << "\"title\":\"" << jsonEscape(record.title) << "\",";
+  out << "\"body\":\"" << jsonEscape(record.body) << "\",";
+  out << "\"eventId\":\"" << jsonEscape(record.eventId) << "\",";
+  out << "\"meta\":\"" << jsonEscape(record.meta) << "\"";
+  out << "}";
+  return out.str();
+}
+
+std::string calendarEventToJson(const CalendarEventRecord &record, long long now) {
+  const bool passed = record.startEpoch <= now;
+  const bool editable = record.status == "active" && !passed;
+  std::ostringstream out;
+  out << "{";
+  out << "\"id\":\"" << jsonEscape(record.id) << "\",";
+  out << "\"createdEpoch\":" << record.createdEpoch << ",";
+  out << "\"updatedEpoch\":" << record.updatedEpoch << ",";
+  out << "\"startEpoch\":" << record.startEpoch << ",";
+  out << "\"endEpoch\":" << record.endEpoch << ",";
+  out << "\"source\":\"" << jsonEscape(record.source) << "\",";
+  out << "\"origin\":\"" << jsonEscape(record.origin) << "\",";
+  out << "\"type\":\"" << jsonEscape(record.type) << "\",";
+  out << "\"status\":\"" << jsonEscape(record.status) << "\",";
+  out << "\"title\":\"" << jsonEscape(record.title) << "\",";
+  out << "\"description\":\"" << jsonEscape(record.description) << "\",";
+  out << "\"meta\":\"" << jsonEscape(record.meta) << "\",";
+  out << "\"notificationId\":\"" << jsonEscape(record.notificationId) << "\",";
+  out << "\"notificationDelivered\":" << jsonBool(!record.notificationId.empty()) << ",";
+  out << "\"passed\":" << jsonBool(passed) << ",";
+  out << "\"editable\":" << jsonBool(editable);
+  out << "}";
+  return out.str();
+}
+
+bool validateNotificationRecord(const NotificationRecord &record) {
+  return validRecordId(record.id) &&
+         validShortToken(record.source, false) &&
+         validShortToken(record.origin, true) &&
+         validShortToken(record.appId, true) &&
+         validTextField(record.siteUrl, 256, true) &&
+         validShortToken(record.type, false) &&
+         validNotificationStatus(record.status) &&
+         validTextField(record.title, 160, false) &&
+         validTextField(record.body, 1024, true) &&
+         validShortToken(record.eventId, true) &&
+         validTextField(record.meta, 1024, true);
+}
+
+bool validateCalendarEventRecord(const CalendarEventRecord &record) {
+  return validRecordId(record.id) &&
+         record.startEpoch > 0 &&
+         record.endEpoch >= record.startEpoch &&
+         validShortToken(record.source, false) &&
+         validShortToken(record.origin, true) &&
+         validShortToken(record.type, false) &&
+         validEventStatus(record.status) &&
+         validTextField(record.title, 160, false) &&
+         validTextField(record.description, 2048, true) &&
+         validTextField(record.meta, 2048, true) &&
+         validShortToken(record.notificationId, true);
+}
+
+bool generateDueCalendarNotifications() {
+  auto events = readCalendarEvents();
+  auto notifications = readNotifications();
+  const long long now = nowEpoch();
+  bool changed = false;
+
+  for (auto &event : events) {
+    if (event.status != "active" || event.notificationId.empty() == false ||
+        event.startEpoch > now) {
+      continue;
+    }
+
+    NotificationRecord notification;
+    notification.id = generatedId("ntf");
+    notification.createdEpoch = now;
+    notification.updatedEpoch = now;
+    notification.timeEpoch = event.startEpoch;
+    notification.source = "calendar";
+    notification.origin = event.origin.empty() ? "suvos.calendar" : event.origin;
+    notification.appId = "";
+    notification.siteUrl = "";
+    notification.type = event.type.empty() ? "calendar" : event.type;
+    notification.status = "unread";
+    notification.title = event.title;
+    notification.body = event.description;
+    notification.eventId = event.id;
+    notification.meta = event.meta;
+
+    if (!validateNotificationRecord(notification)) {
+      continue;
+    }
+
+    notifications.push_back(notification);
+    event.notificationId = notification.id;
+    event.updatedEpoch = now;
+    changed = true;
+  }
+
+  if (!changed) {
+    return true;
+  }
+
+  return writeNotifications(notifications) && writeCalendarEvents(events);
+}
+
+std::string notificationsJson(const std::map<std::string, std::string> &filters) {
+  generateDueCalendarNotifications();
+
+  auto records = readNotifications();
+  std::vector<NotificationRecord> filtered;
+  for (const auto &record : records) {
+    if (notificationMatches(record, filters)) {
+      filtered.push_back(record);
+    }
+  }
+
+  sortNotifications(&filtered, filters);
+  size_t limit = filtered.size();
+  parseOptionalLimit(filters, filtered.size(), &limit);
+  if (limit < filtered.size()) {
+    filtered.resize(limit);
+  }
+
+  std::ostringstream out;
+  out << "{\"ok\":true,\"count\":" << filtered.size() << ",\"notifications\":[";
+  for (size_t i = 0; i < filtered.size(); ++i) {
+    if (i > 0) {
+      out << ",";
+    }
+    out << notificationToJson(filtered[i]);
+  }
+  out << "]}\n";
+  return out.str();
+}
+
+CommandResult notificationCreate(const std::map<std::string, std::string> &options) {
+  NotificationRecord record;
+  const long long now = nowEpoch();
+  record.id = generatedId("ntf");
+  record.createdEpoch = now;
+  record.updatedEpoch = now;
+  if (!parseOptionalEpoch(options, "timeEpoch", 0, &record.timeEpoch)) {
+    return {2, "{\"ok\":false,\"error\":\"invalid_time_epoch\"}\n"};
+  }
+  if (record.timeEpoch == 0) {
+    if (!parseOptionalEpoch(options, "time", 0, &record.timeEpoch)) {
+      return {2, "{\"ok\":false,\"error\":\"invalid_time_epoch\"}\n"};
+    }
+  }
+  if (record.timeEpoch < 0) {
+    return {2, "{\"ok\":false,\"error\":\"invalid_time_epoch\"}\n"};
+  }
+  record.source = normalizedValue(options, "source", "system", 64);
+  record.origin = normalizedValue(options, "origin", "", 128);
+  record.appId = normalizedValue(options, "appId", "", 128);
+  record.siteUrl = normalizedValue(options, "siteUrl", "", 256);
+  record.type = normalizedValue(options, "type", "info", 64);
+  record.status = normalizedValue(options, "status", "unread", 32);
+  record.title = normalizedValue(options, "title", "", 160);
+  record.body = normalizedValue(options, "body", "", 1024);
+  record.eventId = normalizedValue(options, "eventId", "", 96);
+  record.meta = normalizedValue(options, "meta", "", 1024);
+
+  if (!validateNotificationRecord(record)) {
+    return {2, "{\"ok\":false,\"error\":\"invalid_notification\"}\n"};
+  }
+
+  auto records = readNotifications();
+  records.push_back(record);
+  if (!writeNotifications(records)) {
+    return {1, "{\"ok\":false,\"error\":\"notification_write_failed\"}\n"};
+  }
+
+  std::ostringstream out;
+  out << "{\"ok\":true,\"notification\":" << notificationToJson(record) << "}\n";
+  return {0, out.str()};
+}
+
+bool updateNotificationFromOptions(NotificationRecord *record,
+                                   const std::map<std::string, std::string> &options) {
+  const std::vector<std::string> textKeys = {
+      "source", "origin", "appId", "siteUrl", "type", "status", "title", "body", "eventId", "meta"};
+  for (const auto &key : textKeys) {
+    const std::string value = optionValue(options, key);
+    if (value.empty()) {
+      continue;
+    }
+    if (!validTextField(value, key == "body" || key == "meta" ? 1024 : 256, false)) {
+      return false;
+    }
+    if (key == "source") record->source = value;
+    if (key == "origin") record->origin = value;
+    if (key == "appId") record->appId = value;
+    if (key == "siteUrl") record->siteUrl = value;
+    if (key == "type") record->type = value;
+    if (key == "status") record->status = value;
+    if (key == "title") record->title = value;
+    if (key == "body") record->body = value;
+    if (key == "eventId") record->eventId = value;
+    if (key == "meta") record->meta = value;
+  }
+
+  long long timeEpoch = 0;
+  const std::string timeValue = optionValue(options, "timeEpoch").empty()
+      ? optionValue(options, "time")
+      : optionValue(options, "timeEpoch");
+  if (!timeValue.empty()) {
+    if (!parseLongLong(timeValue, &timeEpoch) || timeEpoch < 0) {
+      return false;
+    }
+    record->timeEpoch = timeEpoch;
+  }
+
+  record->updatedEpoch = nowEpoch();
+  return validateNotificationRecord(*record);
+}
+
+CommandResult notificationUpdate(const std::string &id,
+                                 const std::map<std::string, std::string> &options) {
+  if (!validRecordId(id)) {
+    return {2, "{\"ok\":false,\"error\":\"invalid_notification_id\"}\n"};
+  }
+
+  auto records = readNotifications();
+  for (auto &record : records) {
+    if (record.id != id) {
+      continue;
+    }
+    if (!updateNotificationFromOptions(&record, options)) {
+      return {2, "{\"ok\":false,\"error\":\"invalid_notification_update\"}\n"};
+    }
+    if (!writeNotifications(records)) {
+      return {1, "{\"ok\":false,\"error\":\"notification_write_failed\"}\n"};
+    }
+    std::ostringstream out;
+    out << "{\"ok\":true,\"notification\":" << notificationToJson(record) << "}\n";
+    return {0, out.str()};
+  }
+
+  return {127, "{\"ok\":false,\"error\":\"notification_not_found\"}\n"};
+}
+
+CommandResult notificationSetStatus(const std::string &id, const std::string &status) {
+  return notificationUpdate(id, {{"status", status}});
+}
+
+CommandResult notificationDelete(const std::string &id) {
+  if (!validRecordId(id)) {
+    return {2, "{\"ok\":false,\"error\":\"invalid_notification_id\"}\n"};
+  }
+
+  auto records = readNotifications();
+  const size_t before = records.size();
+  records.erase(std::remove_if(records.begin(), records.end(),
+                               [&](const auto &record) { return record.id == id; }),
+                records.end());
+  if (records.size() == before) {
+    return {127, "{\"ok\":false,\"error\":\"notification_not_found\"}\n"};
+  }
+  if (!writeNotifications(records)) {
+    return {1, "{\"ok\":false,\"error\":\"notification_write_failed\"}\n"};
+  }
+
+  return {0, "{\"ok\":true,\"deleted\":1}\n"};
+}
+
+CommandResult notificationClear(const std::map<std::string, std::string> &filters) {
+  auto records = readNotifications();
+  std::vector<NotificationRecord> kept;
+  size_t removed = 0;
+  for (const auto &record : records) {
+    if (notificationMatches(record, filters)) {
+      ++removed;
+    } else {
+      kept.push_back(record);
+    }
+  }
+  if (!writeNotifications(kept)) {
+    return {1, "{\"ok\":false,\"error\":\"notification_write_failed\"}\n"};
+  }
+
+  std::ostringstream out;
+  out << "{\"ok\":true,\"removed\":" << removed << "}\n";
+  return {0, out.str()};
+}
+
+std::string calendarEventsJson(const std::map<std::string, std::string> &filters) {
+  generateDueCalendarNotifications();
+
+  const long long now = nowEpoch();
+  auto records = readCalendarEvents();
+  std::vector<CalendarEventRecord> filtered;
+  for (const auto &record : records) {
+    if (calendarEventMatches(record, filters, now)) {
+      filtered.push_back(record);
+    }
+  }
+
+  sortCalendarEvents(&filtered, filters);
+  size_t limit = filtered.size();
+  parseOptionalLimit(filters, filtered.size(), &limit);
+  if (limit < filtered.size()) {
+    filtered.resize(limit);
+  }
+
+  std::ostringstream out;
+  out << "{\"ok\":true,\"count\":" << filtered.size() << ",\"events\":[";
+  for (size_t i = 0; i < filtered.size(); ++i) {
+    if (i > 0) {
+      out << ",";
+    }
+    out << calendarEventToJson(filtered[i], now);
+  }
+  out << "]}\n";
+  return out.str();
+}
+
+CommandResult calendarEventCreate(const std::map<std::string, std::string> &options) {
+  CalendarEventRecord record;
+  const long long now = nowEpoch();
+  record.id = generatedId("evt");
+  record.createdEpoch = now;
+  record.updatedEpoch = now;
+  if (!parseOptionalEpoch(options, "startEpoch", 0, &record.startEpoch) ||
+      record.startEpoch <= 0) {
+    return {2, "{\"ok\":false,\"error\":\"invalid_start_epoch\"}\n"};
+  }
+  if (!parseOptionalEpoch(options, "endEpoch", record.startEpoch, &record.endEpoch) ||
+      record.endEpoch < record.startEpoch) {
+    return {2, "{\"ok\":false,\"error\":\"invalid_end_epoch\"}\n"};
+  }
+
+  record.source = normalizedValue(options, "source", "calendar", 64);
+  record.origin = normalizedValue(options, "origin", "suvos.calendar", 128);
+  record.type = normalizedValue(options, "type", "calendar", 64);
+  record.status = normalizedValue(options, "status", "active", 32);
+  record.title = normalizedValue(options, "title", "", 160);
+  record.description = normalizedValue(options, "description", "", 2048);
+  record.meta = normalizedValue(options, "meta", "", 2048);
+  record.notificationId = "";
+
+  if (!validateCalendarEventRecord(record)) {
+    return {2, "{\"ok\":false,\"error\":\"invalid_calendar_event\"}\n"};
+  }
+
+  auto records = readCalendarEvents();
+  records.push_back(record);
+  if (!writeCalendarEvents(records)) {
+    return {1, "{\"ok\":false,\"error\":\"calendar_write_failed\"}\n"};
+  }
+
+  std::ostringstream out;
+  out << "{\"ok\":true,\"event\":" << calendarEventToJson(record, now) << "}\n";
+  return {0, out.str()};
+}
+
+bool updateCalendarEventFromOptions(CalendarEventRecord *record,
+                                    const std::map<std::string, std::string> &options) {
+  const long long now = nowEpoch();
+  bool scheduleChanged = false;
+
+  if (!optionValue(options, "startEpoch").empty()) {
+    long long value = 0;
+    if (!parseLongLong(optionValue(options, "startEpoch"), &value) || value <= 0) {
+      return false;
+    }
+    record->startEpoch = value;
+    scheduleChanged = true;
+  }
+  if (!optionValue(options, "endEpoch").empty()) {
+    long long value = 0;
+    if (!parseLongLong(optionValue(options, "endEpoch"), &value) || value < record->startEpoch) {
+      return false;
+    }
+    record->endEpoch = value;
+    scheduleChanged = true;
+  }
+
+  const std::vector<std::string> textKeys = {
+      "source", "origin", "type", "status", "title", "description", "meta"};
+  for (const auto &key : textKeys) {
+    const std::string value = optionValue(options, key);
+    if (value.empty()) {
+      continue;
+    }
+    if (!validTextField(value, key == "description" || key == "meta" ? 2048 : 256, false)) {
+      return false;
+    }
+    if (key == "source") record->source = value;
+    if (key == "origin") record->origin = value;
+    if (key == "type") record->type = value;
+    if (key == "status") record->status = value;
+    if (key == "title") record->title = value;
+    if (key == "description") record->description = value;
+    if (key == "meta") record->meta = value;
+  }
+
+  if (scheduleChanged && record->startEpoch > now) {
+    record->notificationId.clear();
+  }
+  record->updatedEpoch = now;
+  return validateCalendarEventRecord(*record);
+}
+
+CommandResult calendarEventUpdate(const std::string &id,
+                                  const std::map<std::string, std::string> &options) {
+  if (!validRecordId(id)) {
+    return {2, "{\"ok\":false,\"error\":\"invalid_event_id\"}\n"};
+  }
+
+  auto records = readCalendarEvents();
+  const long long now = nowEpoch();
+  for (auto &record : records) {
+    if (record.id != id) {
+      continue;
+    }
+    if (!updateCalendarEventFromOptions(&record, options)) {
+      return {2, "{\"ok\":false,\"error\":\"invalid_event_update\"}\n"};
+    }
+    if (!writeCalendarEvents(records)) {
+      return {1, "{\"ok\":false,\"error\":\"calendar_write_failed\"}\n"};
+    }
+    std::ostringstream out;
+    out << "{\"ok\":true,\"event\":" << calendarEventToJson(record, now) << "}\n";
+    return {0, out.str()};
+  }
+
+  return {127, "{\"ok\":false,\"error\":\"event_not_found\"}\n"};
+}
+
+CommandResult calendarEventSetStatus(const std::string &id, const std::string &status) {
+  return calendarEventUpdate(id, {{"status", status}});
+}
+
+CommandResult calendarEventDelete(const std::string &id) {
+  if (!validRecordId(id)) {
+    return {2, "{\"ok\":false,\"error\":\"invalid_event_id\"}\n"};
+  }
+
+  auto records = readCalendarEvents();
+  const size_t before = records.size();
+  records.erase(std::remove_if(records.begin(), records.end(),
+                               [&](const auto &record) { return record.id == id; }),
+                records.end());
+  if (records.size() == before) {
+    return {127, "{\"ok\":false,\"error\":\"event_not_found\"}\n"};
+  }
+  if (!writeCalendarEvents(records)) {
+    return {1, "{\"ok\":false,\"error\":\"calendar_write_failed\"}\n"};
+  }
+
+  return {0, "{\"ok\":true,\"deleted\":1}\n"};
+}
+
+CommandResult calendarEventClear(const std::map<std::string, std::string> &filters) {
+  const long long now = nowEpoch();
+  auto records = readCalendarEvents();
+  std::vector<CalendarEventRecord> kept;
+  size_t removed = 0;
+  for (const auto &record : records) {
+    if (calendarEventMatches(record, filters, now)) {
+      ++removed;
+    } else {
+      kept.push_back(record);
+    }
+  }
+  if (!writeCalendarEvents(kept)) {
+    return {1, "{\"ok\":false,\"error\":\"calendar_write_failed\"}\n"};
+  }
+
+  std::ostringstream out;
+  out << "{\"ok\":true,\"removed\":" << removed << "}\n";
+  return {0, out.str()};
+}
+
 // Power control plane. Chromium never calls shutdown directly: the browser
 // POSTs to suvos-gateway, which forwards `power <action>` here. suvosd owns the
 // capability check and the privileged action.
@@ -2201,6 +3085,89 @@ CommandResult handleCommand(const std::vector<std::string> &parts) {
       return {1, tr("permission.denied") + "system.datetime\n"};
     }
     return datetimeSet(parts[2]);
+  }
+
+  if (command == "notifications-json") {
+    if (!hasPermission(policy, "notifications.read")) {
+      return {1, tr("permission.denied") + "notifications.read\n"};
+    }
+
+    return {0, notificationsJson(parseOptions(parts, 1))};
+  }
+
+  if (command == "notification") {
+    if (parts.size() < 2) {
+      return {2, "{\"ok\":false,\"error\":\"missing_notification_action\"}\n"};
+    }
+    if (!hasPermission(policy, "notifications.write")) {
+      return {1, tr("permission.denied") + "notifications.write\n"};
+    }
+
+    const std::string &action = parts[1];
+    auto options = parseOptions(parts, 2);
+    const std::string id = optionValue(options, "id");
+    if (action == "create") {
+      return notificationCreate(options);
+    }
+    if (action == "update") {
+      return notificationUpdate(id, options);
+    }
+    if (action == "delete") {
+      return notificationDelete(id);
+    }
+    if (action == "clear") {
+      return notificationClear(options);
+    }
+    if (action == "read") {
+      return notificationSetStatus(id, "read");
+    }
+    if (action == "dismiss") {
+      return notificationSetStatus(id, "dismissed");
+    }
+    return {2, "{\"ok\":false,\"error\":\"unknown_notification_action\"}\n"};
+  }
+
+  if (command == "calendar-events-json") {
+    if (!hasPermission(policy, "calendar.read")) {
+      return {1, tr("permission.denied") + "calendar.read\n"};
+    }
+
+    return {0, calendarEventsJson(parseOptions(parts, 1))};
+  }
+
+  if (command == "calendar") {
+    if (parts.size() < 2) {
+      return {2, "{\"ok\":false,\"error\":\"missing_calendar_action\"}\n"};
+    }
+    if (!hasPermission(policy, "calendar.write")) {
+      return {1, tr("permission.denied") + "calendar.write\n"};
+    }
+
+    const std::string &action = parts[1];
+    auto options = parseOptions(parts, 2);
+    const std::string id = optionValue(options, "id");
+    if (action == "create") {
+      return calendarEventCreate(options);
+    }
+    if (action == "update") {
+      return calendarEventUpdate(id, options);
+    }
+    if (action == "delete") {
+      return calendarEventDelete(id);
+    }
+    if (action == "clear") {
+      return calendarEventClear(options);
+    }
+    if (action == "complete") {
+      return calendarEventSetStatus(id, "completed");
+    }
+    if (action == "cancel") {
+      return calendarEventSetStatus(id, "cancelled");
+    }
+    if (action == "reopen") {
+      return calendarEventSetStatus(id, "active");
+    }
+    return {2, "{\"ok\":false,\"error\":\"unknown_calendar_action\"}\n"};
   }
 
   if (command == "power") {

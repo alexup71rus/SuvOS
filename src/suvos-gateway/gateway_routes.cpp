@@ -151,6 +151,14 @@ void appendQueryOption(std::vector<std::string> *parts,
   }
 }
 
+void appendQueryOptions(std::vector<std::string> *parts,
+                        const std::map<std::string, std::string> &queryValues,
+                        const std::vector<std::string> &keys) {
+  for (const auto &key : keys) {
+    appendQueryOption(parts, queryValues, key);
+  }
+}
+
 bool requireMethod(int fd, const std::string &method, const std::string &expected) {
   if (method == expected) {
     return true;
@@ -364,6 +372,124 @@ bool handleSystemRoute(int fd,
   return false;
 }
 
+bool handleNotificationRoute(int fd,
+                             const std::string &method,
+                             const std::string &path,
+                             const std::map<std::string, std::string> &queryValues) {
+  const std::vector<std::string> filterKeys = {
+      "id", "source", "origin", "appId", "siteUrl", "type", "status", "eventId",
+      "from", "to", "sort", "order", "limit"};
+  const std::vector<std::string> recordKeys = {
+      "source", "origin", "appId", "siteUrl", "type", "status", "title", "body",
+      "eventId", "meta", "timeEpoch", "time"};
+
+  if (path == "/api/notifications") {
+    if (!requireMethod(fd, method, "GET")) {
+      return true;
+    }
+    std::vector<std::string> parts = {"notifications-json"};
+    appendQueryOptions(&parts, queryValues, filterKeys);
+    proxyJsonCommand(fd, parts);
+    return true;
+  }
+
+  constexpr const char *kPrefix = "/api/notifications/";
+  if (path.rfind(kPrefix, 0) != 0) {
+    return false;
+  }
+  if (!requireMethod(fd, method, "POST")) {
+    return true;
+  }
+
+  const std::string action = path.substr(std::strlen(kPrefix));
+  if (action == "create") {
+    std::vector<std::string> parts = {"notification", "create"};
+    appendQueryOptions(&parts, queryValues, recordKeys);
+    proxyJsonCommand(fd, parts);
+    return true;
+  }
+  if (action == "update") {
+    std::vector<std::string> parts = {"notification", "update"};
+    appendQueryOption(&parts, queryValues, "id");
+    appendQueryOptions(&parts, queryValues, recordKeys);
+    proxyJsonCommand(fd, parts);
+    return true;
+  }
+  if (action == "delete" || action == "read" || action == "dismiss") {
+    proxyJsonCommand(fd, {"notification", action, "id=" + queryValue(queryValues, "id")});
+    return true;
+  }
+  if (action == "clear") {
+    std::vector<std::string> parts = {"notification", "clear"};
+    appendQueryOptions(&parts, queryValues, filterKeys);
+    proxyJsonCommand(fd, parts);
+    return true;
+  }
+
+  sendJson(fd, 404, "Not Found",
+           "{\"ok\":false,\"error\":\"unknown_notification_action\"}\n");
+  return true;
+}
+
+bool handleCalendarRoute(int fd,
+                         const std::string &method,
+                         const std::string &path,
+                         const std::map<std::string, std::string> &queryValues) {
+  const std::vector<std::string> filterKeys = {
+      "id", "source", "origin", "type", "status", "passed", "from", "to", "sort", "order",
+      "limit"};
+  const std::vector<std::string> recordKeys = {
+      "source", "origin", "type", "status", "title", "description", "meta",
+      "startEpoch", "endEpoch"};
+
+  if (path == "/api/calendar/events") {
+    if (!requireMethod(fd, method, "GET")) {
+      return true;
+    }
+    std::vector<std::string> parts = {"calendar-events-json"};
+    appendQueryOptions(&parts, queryValues, filterKeys);
+    proxyJsonCommand(fd, parts);
+    return true;
+  }
+
+  constexpr const char *kPrefix = "/api/calendar/events/";
+  if (path.rfind(kPrefix, 0) != 0) {
+    return false;
+  }
+  if (!requireMethod(fd, method, "POST")) {
+    return true;
+  }
+
+  const std::string action = path.substr(std::strlen(kPrefix));
+  if (action == "create") {
+    std::vector<std::string> parts = {"calendar", "create"};
+    appendQueryOptions(&parts, queryValues, recordKeys);
+    proxyJsonCommand(fd, parts);
+    return true;
+  }
+  if (action == "update") {
+    std::vector<std::string> parts = {"calendar", "update"};
+    appendQueryOption(&parts, queryValues, "id");
+    appendQueryOptions(&parts, queryValues, recordKeys);
+    proxyJsonCommand(fd, parts);
+    return true;
+  }
+  if (action == "delete" || action == "complete" || action == "cancel" || action == "reopen") {
+    proxyJsonCommand(fd, {"calendar", action, "id=" + queryValue(queryValues, "id")});
+    return true;
+  }
+  if (action == "clear") {
+    std::vector<std::string> parts = {"calendar", "clear"};
+    appendQueryOptions(&parts, queryValues, filterKeys);
+    proxyJsonCommand(fd, parts);
+    return true;
+  }
+
+  sendJson(fd, 404, "Not Found",
+           "{\"ok\":false,\"error\":\"unknown_calendar_action\"}\n");
+  return true;
+}
+
 }  // namespace
 
 void handleClient(int fd) {
@@ -405,6 +531,12 @@ void handleClient(int fd) {
     return;
   }
   if (handleSystemRoute(fd, method, path, queryValues)) {
+    return;
+  }
+  if (handleNotificationRoute(fd, method, path, queryValues)) {
+    return;
+  }
+  if (handleCalendarRoute(fd, method, path, queryValues)) {
     return;
   }
 
