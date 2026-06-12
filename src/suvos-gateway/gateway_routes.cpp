@@ -101,10 +101,38 @@ void proxyJsonCommand(int fd, const std::vector<std::string> &parts) {
   sendJson(fd, httpStatus, "Error", resultJson(result));
 }
 
+void appendQueryOption(std::vector<std::string> *parts,
+                       const std::map<std::string, std::string> &queryValues,
+                       const std::string &key);
+bool requireMethod(int fd, const std::string &method, const std::string &expected);
+
 // Map a `/api/system/power/<action>` request to a suvosd power command.
 // Chromium never invokes shutdown directly: it POSTs here and suvosd performs
 // the capability check and the privileged action (or returns mock JSON).
-bool handlePowerRoute(int fd, const std::string &method, const std::string &path) {
+bool handlePowerRoute(int fd,
+                      const std::string &method,
+                      const std::string &path,
+                      const std::map<std::string, std::string> &queryValues) {
+  if (path == "/api/system/power" || path == "/api/system/power/status") {
+    if (!requireMethod(fd, method, "GET")) {
+      return true;
+    }
+    proxyJsonCommand(fd, {"power", "status"});
+    return true;
+  }
+
+  if (path == "/api/system/power/configure") {
+    if (!requireMethod(fd, method, "POST")) {
+      return true;
+    }
+    std::vector<std::string> parts = {"power", "configure"};
+    appendQueryOption(&parts, queryValues, "profile");
+    appendQueryOption(&parts, queryValues, "sleepTimeoutSeconds");
+    appendQueryOption(&parts, queryValues, "blankScreenTimeoutSeconds");
+    proxyJsonCommand(fd, parts);
+    return true;
+  }
+
   constexpr const char *kPrefix = "/api/system/power/";
   if (path.rfind(kPrefix, 0) != 0) {
     return false;
@@ -262,6 +290,14 @@ bool handleSystemRoute(int fd,
     return true;
   }
 
+  if (path == "/api/system/wifi/saved") {
+    if (!requireMethod(fd, method, "GET")) {
+      return true;
+    }
+    proxyJsonCommand(fd, {"wifi-saved-json"});
+    return true;
+  }
+
   if (path == "/api/system/wifi/scan") {
     if (method != "GET" && method != "POST") {
       sendJson(fd, 405, "Method Not Allowed",
@@ -292,7 +328,17 @@ bool handleSystemRoute(int fd,
     if (!requireMethod(fd, method, "POST")) {
       return true;
     }
-    proxyJsonCommand(fd, {"wifi", "forget"});
+    std::vector<std::string> parts = {"wifi", "forget"};
+    appendQueryOption(&parts, queryValues, "ssid");
+    proxyJsonCommand(fd, parts);
+    return true;
+  }
+
+  if (path == "/api/system/wifi/disconnect") {
+    if (!requireMethod(fd, method, "POST")) {
+      return true;
+    }
+    proxyJsonCommand(fd, {"wifi", "disconnect"});
     return true;
   }
 
@@ -374,6 +420,24 @@ bool handleSystemRoute(int fd,
     return true;
   }
 
+  if (path == "/api/system/audio/devices") {
+    if (!requireMethod(fd, method, "GET")) {
+      return true;
+    }
+    proxyJsonCommand(fd, {"audio-devices-json"});
+    return true;
+  }
+
+  if (path == "/api/system/audio/test") {
+    if (!requireMethod(fd, method, "POST")) {
+      return true;
+    }
+    std::vector<std::string> parts = {"audio", "test"};
+    appendQueryOption(&parts, queryValues, "device");
+    proxyJsonCommand(fd, parts);
+    return true;
+  }
+
   constexpr const char *kAudioPrefix = "/api/system/audio/";
   if (path.rfind(kAudioPrefix, 0) == 0) {
     if (!requireMethod(fd, method, "POST")) {
@@ -386,10 +450,48 @@ bool handleSystemRoute(int fd,
         sendJson(fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_percent\"}\n");
         return true;
       }
-      proxyJsonCommand(fd, {"audio", action, percent});
+      std::vector<std::string> parts = {"audio", action, "percent=" + percent};
+      appendQueryOption(&parts, queryValues, "device");
+      appendQueryOption(&parts, queryValues, "control");
+      appendQueryOption(&parts, queryValues, "capture");
+      proxyJsonCommand(fd, parts);
       return true;
     }
-    proxyJsonCommand(fd, {"audio", action});
+    std::vector<std::string> parts = {"audio", action};
+    appendQueryOption(&parts, queryValues, "device");
+    appendQueryOption(&parts, queryValues, "control");
+    appendQueryOption(&parts, queryValues, "capture");
+    proxyJsonCommand(fd, parts);
+    return true;
+  }
+
+  if (path == "/api/system/display") {
+    if (!requireMethod(fd, method, "GET")) {
+      return true;
+    }
+    proxyJsonCommand(fd, {"display-json"});
+    return true;
+  }
+
+  if (path == "/api/system/display/configure") {
+    if (!requireMethod(fd, method, "POST")) {
+      return true;
+    }
+    std::vector<std::string> parts = {"display", "configure"};
+    appendQueryOption(&parts, queryValues, "width");
+    appendQueryOption(&parts, queryValues, "height");
+    appendQueryOption(&parts, queryValues, "scale");
+    appendQueryOption(&parts, queryValues, "orientation");
+    appendQueryOption(&parts, queryValues, "output");
+    proxyJsonCommand(fd, parts);
+    return true;
+  }
+
+  if (path == "/api/system/render") {
+    if (!requireMethod(fd, method, "GET")) {
+      return true;
+    }
+    proxyJsonCommand(fd, {"render-json"});
     return true;
   }
 
@@ -427,6 +529,82 @@ bool handleSystemRoute(int fd,
     return true;
   }
 
+  if (path == "/api/system/datetime/format") {
+    if (!requireMethod(fd, method, "POST")) {
+      return true;
+    }
+    const std::string format = queryValue(queryValues, "format");
+    if (format.empty()) {
+      sendJson(fd, 400, "Bad Request", "{\"ok\":false,\"error\":\"missing_format\"}\n");
+      return true;
+    }
+    proxyJsonCommand(fd, {"datetime", "format", "format=" + format});
+    return true;
+  }
+
+  if (path == "/api/system/datetime/ntp") {
+    if (method == "GET") {
+      proxyJsonCommand(fd, {"ntp-json"});
+      return true;
+    }
+    if (!requireMethod(fd, method, "POST")) {
+      return true;
+    }
+    std::vector<std::string> parts = {"datetime", "ntp"};
+    appendQueryOption(&parts, queryValues, "enabled");
+    appendQueryOption(&parts, queryValues, "server");
+    proxyJsonCommand(fd, parts);
+    return true;
+  }
+
+  if (path == "/api/system/storage") {
+    if (!requireMethod(fd, method, "GET")) {
+      return true;
+    }
+    proxyJsonCommand(fd, {"storage-json"});
+    return true;
+  }
+
+  if (path == "/api/system/storage/cleanup") {
+    if (!requireMethod(fd, method, "POST")) {
+      return true;
+    }
+    std::vector<std::string> parts = {"storage", "cleanup"};
+    appendQueryOption(&parts, queryValues, "target");
+    proxyJsonCommand(fd, parts);
+    return true;
+  }
+
+  if (path == "/api/system/versions") {
+    if (!requireMethod(fd, method, "GET")) {
+      return true;
+    }
+    proxyJsonCommand(fd, {"versions-json"});
+    return true;
+  }
+
+  if (path == "/api/system/logs") {
+    if (!requireMethod(fd, method, "GET")) {
+      return true;
+    }
+    proxyJsonCommand(fd, {"logs-json"});
+    return true;
+  }
+
+  if (path == "/api/system/logging") {
+    if (method == "GET") {
+      proxyJsonCommand(fd, {"logs-json"});
+      return true;
+    }
+    if (!requireMethod(fd, method, "POST")) {
+      return true;
+    }
+    std::vector<std::string> parts = {"logging", "configure"};
+    appendQueryOption(&parts, queryValues, "level");
+    proxyJsonCommand(fd, parts);
+    return true;
+  }
+
   return false;
 }
 
@@ -447,6 +625,47 @@ bool handleNotificationRoute(int fd,
     }
     std::vector<std::string> parts = {"notifications-json"};
     appendQueryOptions(&parts, queryValues, filterKeys);
+    proxyJsonCommand(fd, parts);
+    return true;
+  }
+
+  if (path == "/api/notifications/unread-count") {
+    if (!requireMethod(fd, method, "GET")) {
+      return true;
+    }
+    std::vector<std::string> parts = {"notifications-unread-count-json"};
+    appendQueryOptions(&parts, queryValues, filterKeys);
+    proxyJsonCommand(fd, parts);
+    return true;
+  }
+
+  if (path == "/api/notifications/policy") {
+    if (!requireMethod(fd, method, "GET")) {
+      return true;
+    }
+    proxyJsonCommand(fd, {"notification-policy-json"});
+    return true;
+  }
+
+  if (path == "/api/notifications/policy/set") {
+    if (!requireMethod(fd, method, "POST")) {
+      return true;
+    }
+    std::vector<std::string> parts = {"notification", "policy"};
+    appendQueryOption(&parts, queryValues, "targetType");
+    appendQueryOption(&parts, queryValues, "target");
+    appendQueryOption(&parts, queryValues, "allowed");
+    proxyJsonCommand(fd, parts);
+    return true;
+  }
+
+  if (path == "/api/notifications/quiet") {
+    if (!requireMethod(fd, method, "POST")) {
+      return true;
+    }
+    std::vector<std::string> parts = {"notification", "quiet"};
+    appendQueryOption(&parts, queryValues, "enabled");
+    appendQueryOption(&parts, queryValues, "untilEpoch");
     proxyJsonCommand(fd, parts);
     return true;
   }
@@ -593,7 +812,7 @@ void handleClient(int fd) {
   }
 
   // Power routes accept POST and must run before the GET-only guard below.
-  if (handlePowerRoute(fd, method, path)) {
+  if (handlePowerRoute(fd, method, path, queryValues)) {
     return;
   }
   if (handleSystemRoute(fd, method, path, queryValues)) {

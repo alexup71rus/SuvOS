@@ -19,6 +19,7 @@
 #include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <sys/reboot.h>
 #include <sys/time.h>
 #include <sys/types.h>
@@ -45,14 +46,24 @@ constexpr const char *kSessionAuthFile = "/run/suvosd/session.auth";
 constexpr const char *kNetworkStateDir = "/data/suvos/network";
 constexpr const char *kNetworkConfigPath = "/data/suvos/network/network.conf";
 constexpr const char *kWifiConfigPath = "/data/suvos/network/wifi.conf";
+constexpr const char *kWifiNetworksPath = "/data/suvos/network/wifi-networks.tsv";
 constexpr const char *kWifiSupplicantConfigPath = "/data/suvos/network/wpa_supplicant.conf";
 constexpr const char *kWifiSupplicantPidPath = "/run/suvosd/wpa_supplicant.pid";
 constexpr const char *kTimeStateDir = "/data/suvos/time";
 constexpr const char *kTimeConfigPath = "/data/suvos/time/time.conf";
+constexpr const char *kDisplayStateDir = "/data/suvos/display";
+constexpr const char *kDisplayConfigPath = "/data/suvos/display/display.conf";
+constexpr const char *kPowerStateDir = "/data/suvos/power";
+constexpr const char *kPowerConfigPath = "/data/suvos/power/power.conf";
 constexpr const char *kNotificationsDir = "/data/suvos/notifications";
 constexpr const char *kNotificationsPath = "/data/suvos/notifications/notifications.tsv";
+constexpr const char *kNotificationPolicyPath = "/data/suvos/notifications/policy.tsv";
+constexpr const char *kNotificationSettingsPath = "/data/suvos/notifications/settings.conf";
 constexpr const char *kCalendarDir = "/data/suvos/calendar";
 constexpr const char *kCalendarEventsPath = "/data/suvos/calendar/events.tsv";
+constexpr const char *kLoggingStateDir = "/data/suvos/logging";
+constexpr const char *kLoggingConfigPath = "/data/suvos/logging/logging.conf";
+constexpr const char *kGeneratedCacheDir = "/data/suvos/cache";
 constexpr const char *kStateLockPath = "/data/suvos/state/suvosd-state.lock";
 constexpr const char *kExitPrefix = "__SUVOSD_EXIT__:";
 constexpr int kResponseOpenRetries = 200;
@@ -94,6 +105,10 @@ struct RolePolicy {
   std::string userCreation = "deferred-ui";
   std::vector<RoleEntry> roles;
 };
+
+std::map<std::string, std::string> parseKeyValueFile(const std::string &path);
+std::string optionValue(const std::map<std::string, std::string> &options,
+                        const std::string &key);
 
 std::vector<std::string> split(const std::string &input, char separator) {
   std::vector<std::string> parts;
@@ -329,6 +344,11 @@ bool dirExists(const std::string &path) {
   return stat(path.c_str(), &st) == 0 && S_ISDIR(st.st_mode);
 }
 
+bool fileExists(const std::string &path) {
+  struct stat st {};
+  return stat(path.c_str(), &st) == 0;
+}
+
 bool fileExistsExecutable(const std::string &path) {
   return access(path.c_str(), X_OK) == 0;
 }
@@ -376,7 +396,30 @@ void killProcessGroup(pid_t pid, int signal) {
   }
 }
 
+int configuredLogPriority() {
+  std::ifstream file(kLoggingConfigPath);
+  std::string line;
+  std::string level = "info";
+  while (std::getline(file, line)) {
+    line = trim(line);
+    if (line.rfind("level=", 0) == 0) {
+      level = line.substr(std::strlen("level="));
+      break;
+    }
+  }
+
+  if (level == "quiet") return 0;
+  if (level == "error") return 1;
+  if (level == "info") return 2;
+  if (level == "debug") return 3;
+  return 2;
+}
+
 void logConsole(const std::string &message) {
+  if (configuredLogPriority() <= 0) {
+    return;
+  }
+
   int fd = open("/dev/console", O_WRONLY | O_APPEND);
   if (fd < 0) {
     return;
@@ -962,17 +1005,35 @@ bool validTimezoneName(const std::string &value) {
 }
 
 std::string configuredTimezone() {
-  std::istringstream lines(readFile(kTimeConfigPath));
-  std::string line;
-  while (std::getline(lines, line)) {
-    line = trim(line);
-    if (line.rfind("timezone=", 0) != 0) {
-      continue;
-    }
-    const std::string value = line.substr(std::strlen("timezone="));
-    return validTimezoneName(value) ? value : "";
+  auto config = parseKeyValueFile(kTimeConfigPath);
+  const std::string value = optionValue(config, "timezone");
+  return validTimezoneName(value) ? value : "";
+}
+
+std::string configuredTimeFormat() {
+  auto config = parseKeyValueFile(kTimeConfigPath);
+  const std::string value = optionValue(config, "format");
+  return value == "12h" ? "12h" : "24h";
+}
+
+bool configuredNtpEnabled() {
+  auto config = parseKeyValueFile(kTimeConfigPath);
+  const std::string value = optionValue(config, "ntpEnabled");
+  return value == "1" || value == "true" || value == "yes";
+}
+
+bool writeTimeConfigValue(const std::string &key, const std::string &value) {
+  if (!ensureTimeStateDir()) {
+    return false;
   }
-  return "";
+  auto config = parseKeyValueFile(kTimeConfigPath);
+  config[key] = value;
+  std::ostringstream out;
+  out << "timezone=" << optionValue(config, "timezone") << "\n";
+  out << "format=" << (optionValue(config, "format").empty() ? "24h" : optionValue(config, "format")) << "\n";
+  out << "ntpEnabled=" << optionValue(config, "ntpEnabled") << "\n";
+  out << "ntpServer=" << (optionValue(config, "ntpServer").empty() ? "pool.ntp.org" : optionValue(config, "ntpServer")) << "\n";
+  return writeFile(kTimeConfigPath, out.str(), 0600);
 }
 
 bool applyTimezone(const std::string &timezone) {
@@ -1002,6 +1063,9 @@ std::string timeJson() {
   std::strftime(isoBuf, sizeof(isoBuf), "%Y-%m-%dT%H:%M:%S", &localTm);
   char hhmmBuf[8] = {0};
   std::strftime(hhmmBuf, sizeof(hhmmBuf), "%H:%M", &localTm);
+  char displayTimeBuf[16] = {0};
+  std::strftime(displayTimeBuf, sizeof(displayTimeBuf),
+                configuredTimeFormat() == "12h" ? "%I:%M %p" : "%H:%M", &localTm);
   char tzBuf[8] = {0};
   std::strftime(tzBuf, sizeof(tzBuf), "%z", &localTm);
 
@@ -1011,6 +1075,8 @@ std::string timeJson() {
   out << "\"epoch\":" << static_cast<long long>(now) << ",";
   out << "\"iso\":\"" << isoBuf << tzBuf << "\",";
   out << "\"time\":\"" << hhmmBuf << "\",";
+  out << "\"displayTime\":\"" << jsonEscape(displayTimeBuf) << "\",";
+  out << "\"format\":\"" << configuredTimeFormat() << "\",";
   out << "\"timezone\":\"" << tzBuf << "\",";
   out << "\"configuredTimezone\":\"" << jsonEscape(configuredTimezone()) << "\"";
   out << "}\n";
@@ -1253,6 +1319,28 @@ std::string findExecutable(const std::vector<std::string> &candidates) {
   return "";
 }
 
+std::string commandOutput(const std::vector<std::string> &candidates,
+                          const std::vector<std::string> &args) {
+  const std::string executable = findExecutable(candidates);
+  if (executable.empty()) {
+    return "";
+  }
+
+  CommandResult result = runProgram(executable, args);
+  return result.code == 0 ? trim(result.output) : trim(result.output);
+}
+
+void appendJsonStringArray(std::ostringstream *out, const std::vector<std::string> &values) {
+  *out << "[";
+  for (size_t i = 0; i < values.size(); ++i) {
+    if (i > 0) {
+      *out << ",";
+    }
+    *out << "\"" << jsonEscape(values[i]) << "\"";
+  }
+  *out << "]";
+}
+
 bool validDeviceName(const std::string &value) {
   if (value.empty() || value.size() > 64 || value.find("..") != std::string::npos ||
       value.find('/') != std::string::npos || hasControlChar(value)) {
@@ -1377,6 +1465,52 @@ bool writeResolvConf(const std::string &dns) {
     out << "nameserver " << server << "\n";
   }
   return writeFile("/etc/resolv.conf", out.str(), 0644);
+}
+
+std::vector<std::string> dnsServers() {
+  std::vector<std::string> servers;
+  std::ifstream file("/etc/resolv.conf");
+  std::string line;
+  while (std::getline(file, line)) {
+    line = trim(line);
+    if (line.rfind("nameserver ", 0) != 0) {
+      continue;
+    }
+    const std::string server = trim(line.substr(std::strlen("nameserver ")));
+    if (validConfigValue(server, 128)) {
+      servers.push_back(server);
+    }
+  }
+  return servers;
+}
+
+std::string interfaceIpv4Address(const std::string &iface) {
+  const std::string ip = findExecutable({"/bin/ip", "/sbin/ip", "/usr/bin/ip", "/usr/sbin/ip"});
+  if (ip.empty()) {
+    return "";
+  }
+
+  CommandResult result = runProgram(ip, {"-o", "-4", "addr", "show", "dev", iface});
+  if (result.code != 0) {
+    return "";
+  }
+
+  const size_t marker = result.output.find(" inet ");
+  if (marker == std::string::npos) {
+    return "";
+  }
+  const size_t begin = marker + 6;
+  const size_t end = result.output.find(' ', begin);
+  return trim(result.output.substr(begin, end == std::string::npos ? std::string::npos : end - begin));
+}
+
+std::string routeTableText() {
+  std::string routes = commandOutput({"/bin/ip", "/sbin/ip", "/usr/bin/ip", "/usr/sbin/ip"},
+                                     {"route", "show"});
+  if (!routes.empty()) {
+    return routes;
+  }
+  return trim(readFile("/proc/net/route"));
 }
 
 CommandResult applyDhcpNetwork(const std::string &iface) {
@@ -1504,6 +1638,14 @@ CommandResult applyNetworkConfig(const std::map<std::string, std::string> &confi
   return applyStaticNetwork(iface, address, netmask, gateway, dns);
 }
 
+CommandResult networkReconnect() {
+  auto config = parseKeyValueFile(kNetworkConfigPath);
+  if (config.empty()) {
+    return {0, "{\"ok\":true,\"configured\":false,\"applied\":false,\"reason\":\"network_not_configured\"}\n"};
+  }
+  return applyNetworkConfig(config);
+}
+
 CommandResult networkConfigure(const std::map<std::string, std::string> &options) {
   if (options.count("") > 0) {
     return {2, "{\"ok\":false,\"error\":\"invalid_option\"}\n"};
@@ -1596,6 +1738,7 @@ std::string networkJson() {
     out << "\"loopback\":" << jsonBool(loopback) << ",";
     out << "\"wireless\":" << jsonBool(wireless) << ",";
     out << "\"enabled\":" << jsonBool(operstate != "down") << ",";
+    out << "\"ipv4\":\"" << jsonEscape(interfaceIpv4Address(names[i])) << "\",";
     out << "\"operstate\":\"" << jsonEscape(operstate.empty() ? "unknown" : operstate) << "\",";
     if (carrier.empty()) {
       out << "\"carrier\":null";
@@ -1605,6 +1748,10 @@ std::string networkJson() {
     out << "}";
   }
   out << "],";
+  out << "\"dnsServers\":";
+  appendJsonStringArray(&out, dnsServers());
+  out << ",";
+  out << "\"routesText\":\"" << jsonEscape(routeTableText()) << "\",";
   out << "\"enabled\":" << jsonBool(anyEnabled) << ",";
   out << "\"manageable\":" << jsonBool(anyNonLoopback);
   out << "}\n";
@@ -1722,6 +1869,91 @@ std::string wifiConfigJson() {
   out << "\"hasPsk\":" << jsonBool(!psk.empty()) << ",";
   out << "\"path\":\"" << jsonEscape(kWifiConfigPath) << "\"";
   out << "}\n";
+  return out.str();
+}
+
+struct WifiSavedNetwork {
+  std::string ssid;
+  bool hasPsk = false;
+  std::string iface;
+  long long lastConnectedEpoch = 0;
+};
+
+std::vector<WifiSavedNetwork> readWifiSavedNetworks() {
+  std::vector<WifiSavedNetwork> records;
+  std::ifstream file(kWifiNetworksPath);
+  std::string line;
+  while (std::getline(file, line)) {
+    auto fields = split(line, '\t');
+    if (fields.size() < 4) {
+      continue;
+    }
+    WifiSavedNetwork record;
+    record.ssid = fields[0];
+    record.hasPsk = fields[1] == "1";
+    record.iface = fields[2];
+    parseLongLong(fields[3], &record.lastConnectedEpoch);
+    if (validConfigValue(record.ssid, 96) &&
+        (record.iface.empty() || validDeviceName(record.iface))) {
+      records.push_back(record);
+    }
+  }
+  return records;
+}
+
+bool writeWifiSavedNetworks(const std::vector<WifiSavedNetwork> &records) {
+  if (!ensureNetworkStateDir()) {
+    return false;
+  }
+
+  std::ostringstream out;
+  for (const auto &record : records) {
+    out << record.ssid << '\t'
+        << (record.hasPsk ? "1" : "0") << '\t'
+        << record.iface << '\t'
+        << record.lastConnectedEpoch << '\n';
+  }
+  return writeFile(kWifiNetworksPath, out.str(), 0600);
+}
+
+bool upsertWifiSavedNetwork(const std::string &ssid,
+                            bool hasPsk,
+                            const std::string &iface) {
+  auto records = readWifiSavedNetworks();
+  bool found = false;
+  const long long now = static_cast<long long>(std::time(nullptr));
+  for (auto &record : records) {
+    if (record.ssid != ssid) {
+      continue;
+    }
+    record.hasPsk = hasPsk;
+    record.iface = iface;
+    record.lastConnectedEpoch = now;
+    found = true;
+    break;
+  }
+  if (!found) {
+    records.push_back({ssid, hasPsk, iface, now});
+  }
+  return writeWifiSavedNetworks(records);
+}
+
+std::string wifiSavedJson() {
+  auto records = readWifiSavedNetworks();
+  std::ostringstream out;
+  out << "{\"ok\":true,\"networks\":[";
+  for (size_t i = 0; i < records.size(); ++i) {
+    if (i > 0) {
+      out << ",";
+    }
+    out << "{";
+    out << "\"ssid\":\"" << jsonEscape(records[i].ssid) << "\",";
+    out << "\"hasPsk\":" << jsonBool(records[i].hasPsk) << ",";
+    out << "\"interface\":\"" << jsonEscape(records[i].iface) << "\",";
+    out << "\"lastConnectedEpoch\":" << records[i].lastConnectedEpoch;
+    out << "}";
+  }
+  out << "]}\n";
   return out.str();
 }
 
@@ -1892,16 +2124,58 @@ CommandResult wifiConnect(const std::map<std::string, std::string> &options) {
   if (!writeFile(kWifiConfigPath, data.str(), 0600)) {
     return {1, "{\"ok\":false,\"error\":\"wifi_config_write_failed\"}\n"};
   }
+  if (!upsertWifiSavedNetwork(ssid, !psk.empty(), iface)) {
+    return {1, "{\"ok\":false,\"error\":\"wifi_saved_write_failed\"}\n"};
+  }
 
   return applyWifiConfig(parseKeyValueFile(kWifiConfigPath));
 }
 
-CommandResult wifiForget() {
+CommandResult wifiDisconnect() {
   auto config = parseKeyValueFile(kWifiConfigPath);
-  stopWifiSupplicant(optionValue(config, "interface"));
+  const std::string iface = optionValue(config, "interface");
+  stopWifiSupplicant(iface);
+  if (!iface.empty()) {
+    (void)networkAction("disable", iface);
+  }
   unlink(kWifiConfigPath);
+  return {0, "{\"ok\":true,\"configured\":false,\"connected\":false,\"applied\":true}\n"};
+}
+
+CommandResult wifiForget(const std::map<std::string, std::string> &options) {
+  auto config = parseKeyValueFile(kWifiConfigPath);
+  const std::string activeSsid = optionValue(config, "ssid");
+  const std::string ssid = optionValue(options, "ssid");
+  if (!ssid.empty() && !validConfigValue(ssid, 96)) {
+    return {2, "{\"ok\":false,\"error\":\"invalid_ssid\"}\n"};
+  }
+
+  if (ssid.empty() || ssid == activeSsid) {
+    stopWifiSupplicant(optionValue(config, "interface"));
+    unlink(kWifiConfigPath);
+  }
   unlink(kWifiSupplicantConfigPath);
-  return {0, "{\"ok\":true,\"configured\":false,\"applied\":true}\n"};
+
+  auto records = readWifiSavedNetworks();
+  size_t removed = 0;
+  if (ssid.empty()) {
+    removed = records.size();
+    records.clear();
+  } else {
+    const size_t before = records.size();
+    records.erase(std::remove_if(records.begin(), records.end(),
+                                 [&](const auto &record) { return record.ssid == ssid; }),
+                  records.end());
+    removed = before - records.size();
+  }
+  if (!writeWifiSavedNetworks(records)) {
+    return {1, "{\"ok\":false,\"error\":\"wifi_saved_write_failed\"}\n"};
+  }
+
+  std::ostringstream out;
+  out << "{\"ok\":true,\"configured\":false,\"applied\":true,\"removed\":"
+      << removed << "}\n";
+  return {0, out.str()};
 }
 
 std::string wifiScanJson() {
@@ -2350,13 +2624,41 @@ int parseFirstAudioPercent(const std::string &output) {
   }
 }
 
+std::string audioCardsText() {
+  return trim(readFile("/proc/asound/cards"));
+}
+
+std::string audioPcmText() {
+  return trim(readFile("/proc/asound/pcm"));
+}
+
+std::vector<std::string> audioPcmLines(const std::string &needle) {
+  std::vector<std::string> linesOut;
+  std::istringstream lines(audioPcmText());
+  std::string line;
+  while (std::getline(lines, line)) {
+    line = trim(line);
+    if (!line.empty() && line.find(needle) != std::string::npos) {
+      linesOut.push_back(line);
+    }
+  }
+  return linesOut;
+}
+
 std::string audioJson() {
   const std::string amixer = findExecutable({"/usr/bin/amixer", "/bin/amixer"});
-  const std::string cards = trim(readFile("/proc/asound/cards"));
+  const std::string cards = audioCardsText();
+  const auto outputs = audioPcmLines("playback");
+  const auto inputs = audioPcmLines("capture");
   if (amixer.empty()) {
     std::ostringstream out;
     out << "{\"ok\":true,\"available\":false,\"reason\":\"amixer_missing\",";
-    out << "\"cardsText\":\"" << jsonEscape(cards) << "\"}\n";
+    out << "\"cardsText\":\"" << jsonEscape(cards) << "\",";
+    out << "\"outputs\":";
+    appendJsonStringArray(&out, outputs);
+    out << ",\"inputs\":";
+    appendJsonStringArray(&out, inputs);
+    out << "}\n";
     return out.str();
   }
 
@@ -2365,7 +2667,12 @@ std::string audioJson() {
     std::ostringstream out;
     out << "{\"ok\":true,\"available\":false,\"reason\":\"master_control_missing\",";
     out << "\"control\":\"Master\",";
-    out << "\"cardsText\":\"" << jsonEscape(cards) << "\"}\n";
+    out << "\"cardsText\":\"" << jsonEscape(cards) << "\",";
+    out << "\"outputs\":";
+    appendJsonStringArray(&out, outputs);
+    out << ",\"inputs\":";
+    appendJsonStringArray(&out, inputs);
+    out << "}\n";
     return out.str();
   }
 
@@ -2382,29 +2689,58 @@ std::string audioJson() {
     out << "\"volumePercent\":" << percent << ",";
   }
   out << "\"muted\":" << jsonBool(muted) << ",";
-  out << "\"cardsText\":\"" << jsonEscape(cards) << "\"";
+  out << "\"cardsText\":\"" << jsonEscape(cards) << "\",";
+  out << "\"pcmText\":\"" << jsonEscape(audioPcmText()) << "\",";
+  out << "\"outputs\":";
+  appendJsonStringArray(&out, outputs);
+  out << ",\"inputs\":";
+  appendJsonStringArray(&out, inputs);
   out << "}\n";
   return out.str();
 }
 
-CommandResult audioAction(const std::string &action, const std::string &value) {
+CommandResult audioAction(const std::string &action,
+                          const std::string &value,
+                          const std::map<std::string, std::string> &options) {
   const std::string amixer = findExecutable({"/usr/bin/amixer", "/bin/amixer"});
   if (amixer.empty()) {
     return {0, "{\"ok\":true,\"available\":false,\"reason\":\"amixer_missing\"}\n"};
   }
 
-  std::vector<std::string> args = {"set", "Master"};
+  const std::string card = optionValue(options, "device");
+  const bool capture = optionValue(options, "capture") == "1" ||
+                       optionValue(options, "capture") == "true" ||
+                       action == "mute-input" || action == "unmute-input" ||
+                       action == "toggle-input";
+  const std::string control = optionValue(options, "control").empty()
+      ? (capture ? "Capture" : "Master")
+      : optionValue(options, "control");
+
+  if (!card.empty() && !validDeviceName(card)) {
+    return {2, "{\"ok\":false,\"error\":\"invalid_audio_device\"}\n"};
+  }
+  if (!validConfigValue(control, 64)) {
+    return {2, "{\"ok\":false,\"error\":\"invalid_audio_control\"}\n"};
+  }
+
+  std::vector<std::string> args;
+  if (!card.empty()) {
+    args.push_back("-c");
+    args.push_back(card);
+  }
+  args.push_back("set");
+  args.push_back(control);
   if (action == "set") {
     int percent = 0;
     if (!parsePercent(value, &percent)) {
       return {2, "{\"ok\":false,\"error\":\"invalid_percent\"}\n"};
     }
     args.push_back(std::to_string(percent) + "%");
-  } else if (action == "mute") {
+  } else if (action == "mute" || action == "mute-input") {
     args.push_back("mute");
-  } else if (action == "unmute") {
+  } else if (action == "unmute" || action == "unmute-input") {
     args.push_back("unmute");
-  } else if (action == "toggle") {
+  } else if (action == "toggle" || action == "toggle-input") {
     args.push_back("toggle");
   } else {
     return {2, "{\"ok\":false,\"error\":\"unknown_audio_action\"}\n"};
@@ -2414,8 +2750,446 @@ CommandResult audioAction(const std::string &action, const std::string &value) {
   const bool success = result.code == 0;
   std::ostringstream out;
   out << "{\"ok\":" << jsonBool(success) << ",\"available\":true,\"action\":\""
-      << jsonEscape(action) << "\"}\n";
+      << jsonEscape(action) << "\",\"device\":\"" << jsonEscape(card)
+      << "\",\"control\":\"" << jsonEscape(control) << "\"";
+  if (!success) {
+    out << ",\"details\":\"" << jsonEscape(trim(result.output)) << "\"";
+  }
+  out << "}\n";
   return {success ? 0 : 1, out.str()};
+}
+
+CommandResult audioTestSound(const std::map<std::string, std::string> &options) {
+  const std::string speakerTest = findExecutable({"/usr/bin/speaker-test", "/bin/speaker-test"});
+  if (speakerTest.empty()) {
+    return {0, "{\"ok\":true,\"available\":false,\"applied\":false,\"reason\":\"speaker_test_missing\"}\n"};
+  }
+
+  std::vector<std::string> args = {"-t", "sine", "-f", "440", "-l", "1"};
+  const std::string device = optionValue(options, "device");
+  if (!device.empty()) {
+    if (!validConfigValue(device, 64)) {
+      return {2, "{\"ok\":false,\"error\":\"invalid_audio_device\"}\n"};
+    }
+    args.push_back("-D");
+    args.push_back(device);
+  }
+  CommandResult result = runProgram(speakerTest, args);
+  const bool success = result.code == 0;
+  std::ostringstream out;
+  out << "{\"ok\":" << jsonBool(success) << ",\"available\":true,\"applied\":"
+      << jsonBool(success) << ",\"tool\":\"speaker-test\"";
+  if (!device.empty()) {
+    out << ",\"device\":\"" << jsonEscape(device) << "\"";
+  }
+  if (!success) {
+    out << ",\"details\":\"" << jsonEscape(trim(result.output)) << "\"";
+  }
+  out << "}\n";
+  return {success ? 0 : 1, out.str()};
+}
+
+bool ensureDisplayStateDir() {
+  ensureDir(kDataRoot, 0755);
+  return ensureDir(kDisplayStateDir, 0700);
+}
+
+std::string cmdlineValue(const std::string &key) {
+  for (const auto &arg : split(readFile("/proc/cmdline"), ' ')) {
+    const std::string prefix = key + "=";
+    if (arg.rfind(prefix, 0) == 0) {
+      return arg.substr(prefix.size());
+    }
+  }
+  return "";
+}
+
+std::string renderProfile() {
+  const std::string value = cmdlineValue("suvos.render");
+  return value.empty() ? "hardware" : value;
+}
+
+std::string displayJson() {
+  auto config = parseKeyValueFile(kDisplayConfigPath);
+  const auto drmEntries = listDirNames("/sys/class/drm");
+  std::ostringstream out;
+  out << "{\"ok\":true,\"available\":" << jsonBool(!drmEntries.empty()) << ",";
+  out << "\"configured\":{";
+  out << "\"width\":\"" << jsonEscape(optionValue(config, "width")) << "\",";
+  out << "\"height\":\"" << jsonEscape(optionValue(config, "height")) << "\",";
+  out << "\"scale\":\"" << jsonEscape(optionValue(config, "scale")) << "\",";
+  out << "\"orientation\":\"" << jsonEscape(optionValue(config, "orientation")) << "\",";
+  out << "\"output\":\"" << jsonEscape(optionValue(config, "output")) << "\"";
+  out << "},\"outputs\":[";
+  bool first = true;
+  for (const auto &entry : drmEntries) {
+    const std::string base = "/sys/class/drm/" + entry;
+    if (!fileExists(base + "/status") && !fileExists(base + "/modes")) {
+      continue;
+    }
+    if (!first) {
+      out << ",";
+    }
+    first = false;
+    std::vector<std::string> modes;
+    std::istringstream modeLines(readFile(base + "/modes"));
+    std::string mode;
+    while (std::getline(modeLines, mode)) {
+      mode = trim(mode);
+      if (!mode.empty()) {
+        modes.push_back(mode);
+      }
+    }
+    out << "{";
+    out << "\"name\":\"" << jsonEscape(entry) << "\",";
+    out << "\"status\":\"" << jsonEscape(readTrimmed(base + "/status")) << "\",";
+    out << "\"enabled\":\"" << jsonEscape(readTrimmed(base + "/enabled")) << "\",";
+    out << "\"modes\":";
+    appendJsonStringArray(&out, modes);
+    out << "}";
+  }
+  out << "],\"framebuffer\":" << jsonBool(fileExists("/dev/fb0")) << "}\n";
+  return out.str();
+}
+
+bool validOrientation(const std::string &value) {
+  return value.empty() || value == "normal" || value == "left" ||
+         value == "right" || value == "inverted";
+}
+
+bool validScaleValue(const std::string &value) {
+  if (value.empty() || value.size() > 16 || hasControlChar(value)) {
+    return false;
+  }
+  for (char ch : value) {
+    if (!std::isdigit(static_cast<unsigned char>(ch)) && ch != '.') {
+      return false;
+    }
+  }
+  return true;
+}
+
+CommandResult displayConfigure(const std::map<std::string, std::string> &options) {
+  const std::string width = optionValue(options, "width");
+  const std::string height = optionValue(options, "height");
+  const std::string scale = optionValue(options, "scale").empty() ? "1" : optionValue(options, "scale");
+  const std::string orientation = optionValue(options, "orientation").empty()
+      ? "normal" : optionValue(options, "orientation");
+  const std::string output = optionValue(options, "output");
+  long long widthValue = 0;
+  long long heightValue = 0;
+  if ((!width.empty() && (!parseLongLong(width, &widthValue) || widthValue <= 0 || widthValue > 16384)) ||
+      (!height.empty() && (!parseLongLong(height, &heightValue) || heightValue <= 0 || heightValue > 16384)) ||
+      !validScaleValue(scale) || !validOrientation(orientation) ||
+      (!output.empty() && !validDeviceName(output))) {
+    return {2, "{\"ok\":false,\"error\":\"invalid_display_config\"}\n"};
+  }
+  if (!ensureDisplayStateDir()) {
+    return {1, "{\"ok\":false,\"error\":\"display_state_unavailable\"}\n"};
+  }
+  std::ostringstream data;
+  data << "width=" << width << "\n";
+  data << "height=" << height << "\n";
+  data << "scale=" << scale << "\n";
+  data << "orientation=" << orientation << "\n";
+  data << "output=" << output << "\n";
+  if (!writeFile(kDisplayConfigPath, data.str(), 0600)) {
+    return {1, "{\"ok\":false,\"error\":\"display_config_write_failed\"}\n"};
+  }
+
+  const std::string wlrRandr = findExecutable({"/usr/bin/wlr-randr", "/bin/wlr-randr"});
+  if (wlrRandr.empty()) {
+    std::ostringstream out;
+    out << "{\"ok\":true,\"configured\":true,\"applied\":false,"
+        << "\"reason\":\"display_apply_tool_missing\"}\n";
+    return {0, out.str()};
+  }
+
+  std::vector<std::string> args;
+  if (!output.empty()) {
+    args.push_back("--output");
+    args.push_back(output);
+  }
+  if (!width.empty() && !height.empty()) {
+    args.push_back("--mode");
+    args.push_back(width + "x" + height);
+  }
+  args.push_back("--scale");
+  args.push_back(scale);
+  args.push_back("--transform");
+  args.push_back(orientation);
+  CommandResult result = runProgram(wlrRandr, args);
+  std::ostringstream out;
+  out << "{\"ok\":" << jsonBool(result.code == 0)
+      << ",\"configured\":true,\"applied\":" << jsonBool(result.code == 0);
+  if (result.code != 0) {
+    out << ",\"error\":\"display_apply_failed\",";
+    out << "\"details\":\"" << jsonEscape(trim(result.output)) << "\"";
+  }
+  out << "}\n";
+  return {result.code == 0 ? 0 : 1, out.str()};
+}
+
+std::string renderJson() {
+  std::vector<std::string> dri = listDirNames("/dev/dri");
+  std::vector<std::string> modules;
+  std::istringstream lines(readFile("/proc/modules"));
+  std::string line;
+  while (std::getline(lines, line)) {
+    if (line.find("drm") != std::string::npos ||
+        line.find("virtio") != std::string::npos ||
+        line.find("gpu") != std::string::npos) {
+      modules.push_back(trim(line));
+    }
+  }
+
+  std::ostringstream out;
+  out << "{\"ok\":true,\"renderProfile\":\"" << jsonEscape(renderProfile()) << "\",";
+  out << "\"cmdline\":\"" << jsonEscape(trim(readFile("/proc/cmdline"))) << "\",";
+  out << "\"driDevices\":";
+  appendJsonStringArray(&out, dri);
+  out << ",\"framebuffer\":" << jsonBool(fileExists("/dev/fb0")) << ",";
+  out << "\"modules\":";
+  appendJsonStringArray(&out, modules);
+  out << "}\n";
+  return out.str();
+}
+
+bool ensurePowerStateDir() {
+  ensureDir(kDataRoot, 0755);
+  return ensureDir(kPowerStateDir, 0700);
+}
+
+std::string powerStatusJson() {
+  std::string battery = batteryJson();
+  if (!battery.empty() && battery.back() == '\n') {
+    battery.pop_back();
+  }
+  auto config = parseKeyValueFile(kPowerConfigPath);
+  std::ostringstream out;
+  out << "{\"ok\":true,";
+  out << "\"profile\":\"" << jsonEscape(optionValue(config, "profile").empty()
+      ? "balanced" : optionValue(config, "profile")) << "\",";
+  out << "\"sleepTimeoutSeconds\":\"" << jsonEscape(optionValue(config, "sleepTimeoutSeconds")) << "\",";
+  out << "\"blankScreenTimeoutSeconds\":\"" << jsonEscape(optionValue(config, "blankScreenTimeoutSeconds")) << "\",";
+  out << "\"powerprofilesctlAvailable\":" << jsonBool(!findExecutable({"/usr/bin/powerprofilesctl", "/bin/powerprofilesctl"}).empty()) << ",";
+  out << "\"settermAvailable\":" << jsonBool(!findExecutable({"/bin/setterm", "/usr/bin/setterm"}).empty()) << ",";
+  out << "\"battery\":" << battery;
+  out << "}\n";
+  return out.str();
+}
+
+CommandResult powerConfigure(const std::map<std::string, std::string> &options) {
+  const std::string profile = optionValue(options, "profile").empty()
+      ? "balanced" : optionValue(options, "profile");
+  const std::string sleepTimeout = optionValue(options, "sleepTimeoutSeconds");
+  const std::string blankTimeout = optionValue(options, "blankScreenTimeoutSeconds");
+  long long parsed = 0;
+  if ((profile != "power-saver" && profile != "balanced" && profile != "performance") ||
+      (!sleepTimeout.empty() && (!parseLongLong(sleepTimeout, &parsed) || parsed < 0 || parsed > 86400)) ||
+      (!blankTimeout.empty() && (!parseLongLong(blankTimeout, &parsed) || parsed < 0 || parsed > 86400))) {
+    return {2, "{\"ok\":false,\"error\":\"invalid_power_config\"}\n"};
+  }
+  if (!ensurePowerStateDir()) {
+    return {1, "{\"ok\":false,\"error\":\"power_state_unavailable\"}\n"};
+  }
+  std::ostringstream data;
+  data << "profile=" << profile << "\n";
+  data << "sleepTimeoutSeconds=" << sleepTimeout << "\n";
+  data << "blankScreenTimeoutSeconds=" << blankTimeout << "\n";
+  if (!writeFile(kPowerConfigPath, data.str(), 0600)) {
+    return {1, "{\"ok\":false,\"error\":\"power_config_write_failed\"}\n"};
+  }
+
+  bool profileApplied = false;
+  const std::string powerprofilesctl = findExecutable({"/usr/bin/powerprofilesctl", "/bin/powerprofilesctl"});
+  if (!powerprofilesctl.empty()) {
+    profileApplied = runProgram(powerprofilesctl, {"set", profile}).code == 0;
+  }
+
+  bool blankApplied = false;
+  const std::string setterm = findExecutable({"/bin/setterm", "/usr/bin/setterm"});
+  if (!setterm.empty() && !blankTimeout.empty()) {
+    long long minutes = 0;
+    parseLongLong(blankTimeout, &minutes);
+    minutes = minutes <= 0 ? 0 : std::max(1LL, minutes / 60);
+    blankApplied = runProgram(setterm, {"-blank", std::to_string(minutes)}).code == 0;
+  }
+
+  std::ostringstream out;
+  out << "{\"ok\":true,\"configured\":true,\"profile\":\"" << jsonEscape(profile) << "\",";
+  out << "\"profileApplied\":" << jsonBool(profileApplied) << ",";
+  out << "\"blankApplied\":" << jsonBool(blankApplied);
+  if (powerprofilesctl.empty()) {
+    out << ",\"profileReason\":\"powerprofilesctl_missing\"";
+  }
+  if (setterm.empty() && !blankTimeout.empty()) {
+    out << ",\"blankReason\":\"setterm_missing\"";
+  }
+  out << "}\n";
+  return {0, out.str()};
+}
+
+std::string statvfsJson(const std::string &path) {
+  struct statvfs st {};
+  std::ostringstream out;
+  out << "{";
+  out << "\"path\":\"" << jsonEscape(path) << "\",";
+  if (statvfs(path.c_str(), &st) != 0) {
+    out << "\"available\":false";
+  } else {
+    const unsigned long long block = st.f_frsize == 0 ? st.f_bsize : st.f_frsize;
+    const unsigned long long total = static_cast<unsigned long long>(st.f_blocks) * block;
+    const unsigned long long free = static_cast<unsigned long long>(st.f_bavail) * block;
+    out << "\"available\":true,\"totalBytes\":" << total
+        << ",\"freeBytes\":" << free
+        << ",\"usedBytes\":" << (total > free ? total - free : 0);
+  }
+  out << "}";
+  return out.str();
+}
+
+std::string storageJson() {
+  std::ostringstream out;
+  out << "{\"ok\":true,\"mounts\":[";
+  const std::vector<std::string> paths = {"/", kSystemRoot, kDataRoot, "/tmp"};
+  for (size_t i = 0; i < paths.size(); ++i) {
+    if (i > 0) {
+      out << ",";
+    }
+    out << statvfsJson(paths[i]);
+  }
+  out << "],\"safeCleanupTargets\":[\"cache\",\"tmp\",\"logs\",\"all\"]}\n";
+  return out.str();
+}
+
+bool safeCleanupPath(const std::string &path) {
+  return path == kGeneratedCacheDir ||
+         path == std::string(kDataRoot) + "/tmp" ||
+         path == std::string(kDataRoot) + "/logs";
+}
+
+size_t removePathChildrenUnchecked(const std::string &path) {
+  DIR *dir = opendir(path.c_str());
+  if (dir == nullptr) {
+    return 0;
+  }
+  size_t removed = 0;
+  while (dirent *entry = readdir(dir)) {
+    std::string name(entry->d_name);
+    if (name == "." || name == "..") {
+      continue;
+    }
+    const std::string child = path + "/" + name;
+    struct stat st {};
+    if (lstat(child.c_str(), &st) != 0) {
+      continue;
+    }
+    if (S_ISDIR(st.st_mode)) {
+      removed += removePathChildrenUnchecked(child);
+      if (rmdir(child.c_str()) == 0) {
+        ++removed;
+      }
+    } else if (unlink(child.c_str()) == 0) {
+      ++removed;
+    }
+  }
+  closedir(dir);
+  return removed;
+}
+
+size_t removePathChildren(const std::string &path) {
+  if (!safeCleanupPath(path)) {
+    return 0;
+  }
+  return removePathChildrenUnchecked(path);
+}
+
+CommandResult storageCleanup(const std::map<std::string, std::string> &options) {
+  const std::string target = optionValue(options, "target").empty()
+      ? "cache" : optionValue(options, "target");
+  std::vector<std::string> paths;
+  if (target == "cache") {
+    paths.push_back(kGeneratedCacheDir);
+  } else if (target == "tmp") {
+    paths.push_back(std::string(kDataRoot) + "/tmp");
+  } else if (target == "logs") {
+    paths.push_back(std::string(kDataRoot) + "/logs");
+  } else if (target == "all") {
+    paths = {kGeneratedCacheDir, std::string(kDataRoot) + "/tmp", std::string(kDataRoot) + "/logs"};
+  } else {
+    return {2, "{\"ok\":false,\"error\":\"invalid_cleanup_target\"}\n"};
+  }
+
+  size_t removed = 0;
+  for (const auto &path : paths) {
+    ensureDir(path.c_str(), 0700);
+    removed += removePathChildren(path);
+  }
+
+  std::ostringstream out;
+  out << "{\"ok\":true,\"target\":\"" << jsonEscape(target)
+      << "\",\"removedEntries\":" << removed << "}\n";
+  return {0, out.str()};
+}
+
+std::string versionsJson() {
+  auto build = parseKeyValueFile(std::string(kSystemRoot) + "/config/build.conf");
+  std::string chromiumVersion;
+  const std::string chromium = findExecutable({"/usr/lib/chromium/chromium",
+                                               "/usr/bin/chromium",
+                                               "/system/suvos/chromium/chromium"});
+  if (!chromium.empty()) {
+    chromiumVersion = trim(runProgram(chromium, {"--version"}).output);
+  }
+  std::ostringstream out;
+  out << "{\"ok\":true,";
+  out << "\"suvos\":{\"arch\":\"" << jsonEscape(optionValue(build, "SUVOS_ARCH"))
+      << "\",\"profile\":\"" << jsonEscape(optionValue(build, "SUVOS_BUILD_PROFILE"))
+      << "\",\"withGui\":\"" << jsonEscape(optionValue(build, "SUVOS_WITH_GUI"))
+      << "\",\"withAec\":\"" << jsonEscape(optionValue(build, "SUVOS_WITH_AEC")) << "\"},";
+  out << "\"kernel\":\"" << jsonEscape(trim(readFile("/proc/version"))) << "\",";
+  out << "\"chromium\":{\"available\":" << jsonBool(!chromium.empty())
+      << ",\"path\":\"" << jsonEscape(chromium)
+      << "\",\"version\":\"" << jsonEscape(chromiumVersion) << "\"},";
+  out << "\"aec\":{\"status\":\"" << jsonEscape(trim(readFile("/run/suvos-aec/status"))) << "\"}";
+  out << "}\n";
+  return out.str();
+}
+
+std::string logsJson() {
+  auto config = parseKeyValueFile(kLoggingConfigPath);
+  std::vector<std::string> paths;
+  for (const auto &name : listDirNames("/tmp")) {
+    if (name.rfind("suvos", 0) == 0 && hasSuffix(name, ".log")) {
+      paths.push_back("/tmp/" + name);
+    }
+  }
+  for (const auto &name : listDirNames(std::string(kDataRoot) + "/logs")) {
+    paths.push_back(std::string(kDataRoot) + "/logs/" + name);
+  }
+  std::ostringstream out;
+  out << "{\"ok\":true,\"level\":\"" << jsonEscape(optionValue(config, "level").empty()
+      ? "info" : optionValue(config, "level")) << "\",\"logs\":";
+  appendJsonStringArray(&out, paths);
+  out << "}\n";
+  return out.str();
+}
+
+CommandResult loggingConfigure(const std::map<std::string, std::string> &options) {
+  const std::string level = optionValue(options, "level").empty()
+      ? "info" : optionValue(options, "level");
+  if (level != "quiet" && level != "error" && level != "info" && level != "debug") {
+    return {2, "{\"ok\":false,\"error\":\"invalid_log_level\"}\n"};
+  }
+  ensureDir(kDataRoot, 0755);
+  if (!ensureDir(kLoggingStateDir, 0700) ||
+      !writeFile(kLoggingConfigPath, "level=" + level + "\n", 0600)) {
+    return {1, "{\"ok\":false,\"error\":\"logging_config_write_failed\"}\n"};
+  }
+  std::ostringstream out;
+  out << "{\"ok\":true,\"level\":\"" << jsonEscape(level) << "\"}\n";
+  return {0, out.str()};
 }
 
 std::string datetimeJson() {
@@ -2426,7 +3200,10 @@ std::string datetimeJson() {
   if (!base.empty() && base.back() == '}') {
     base.pop_back();
   }
-  base += ",\"canSet\":true,\"timezoneManaged\":true}\n";
+  base += ",\"canSet\":true,\"timezoneManaged\":true";
+  base += ",\"ntpEnabled\":";
+  base += jsonBool(configuredNtpEnabled());
+  base += "}\n";
   return base;
 }
 
@@ -2469,6 +3246,99 @@ CommandResult datetimeSetTimezone(const std::string &timezone) {
   }
   out << "}\n";
   return {success ? 0 : 1, out.str()};
+}
+
+std::string ntpStatusJson() {
+  const bool enabled = configuredNtpEnabled();
+  const std::string ntpd = findExecutable({"/bin/ntpd", "/sbin/ntpd", "/usr/bin/ntpd", "/usr/sbin/ntpd"});
+  const bool running = runProgram(findExecutable({"/bin/pidof", "/sbin/pidof", "/usr/bin/pidof", "/usr/sbin/pidof"}),
+                                  {"ntpd"}).code == 0;
+  auto config = parseKeyValueFile(kTimeConfigPath);
+  std::ostringstream out;
+  out << "{\"ok\":true,\"enabled\":" << jsonBool(enabled) << ",";
+  out << "\"available\":" << jsonBool(!ntpd.empty()) << ",";
+  out << "\"running\":" << jsonBool(running) << ",";
+  out << "\"server\":\"" << jsonEscape(optionValue(config, "ntpServer").empty()
+      ? "pool.ntp.org" : optionValue(config, "ntpServer")) << "\"";
+  if (ntpd.empty()) {
+    out << ",\"reason\":\"ntpd_missing\"";
+  }
+  out << "}\n";
+  return out.str();
+}
+
+bool validNetworkHostToken(const std::string &value) {
+  if (value.empty() || value.size() > 128 || hasControlChar(value)) {
+    return false;
+  }
+  for (char ch : value) {
+    const bool allowed = (ch >= 'A' && ch <= 'Z') ||
+                         (ch >= 'a' && ch <= 'z') ||
+                         (ch >= '0' && ch <= '9') ||
+                         ch == '.' || ch == '-' || ch == ':' || ch == '_';
+    if (!allowed) {
+      return false;
+    }
+  }
+  return true;
+}
+
+CommandResult datetimeSetFormat(const std::string &format) {
+  if (format != "12h" && format != "24h") {
+    return {2, "{\"ok\":false,\"error\":\"invalid_time_format\"}\n"};
+  }
+  if (!writeTimeConfigValue("format", format)) {
+    return {1, "{\"ok\":false,\"error\":\"time_config_write_failed\"}\n"};
+  }
+  std::ostringstream out;
+  out << "{\"ok\":true,\"format\":\"" << format << "\"}\n";
+  return {0, out.str()};
+}
+
+CommandResult datetimeSetNtp(const std::map<std::string, std::string> &options) {
+  const std::string enabledValue = optionValue(options, "enabled");
+  const bool enabled = enabledValue == "1" || enabledValue == "true" ||
+                       enabledValue == "yes" || enabledValue == "on";
+  const std::string server = optionValue(options, "server").empty()
+      ? "pool.ntp.org"
+      : optionValue(options, "server");
+  if (!validNetworkHostToken(server)) {
+    return {2, "{\"ok\":false,\"error\":\"invalid_ntp_server\"}\n"};
+  }
+  if (!writeTimeConfigValue("ntpEnabled", enabled ? "true" : "false") ||
+      !writeTimeConfigValue("ntpServer", server)) {
+    return {1, "{\"ok\":false,\"error\":\"time_config_write_failed\"}\n"};
+  }
+
+  const std::string ntpd = findExecutable({"/bin/ntpd", "/sbin/ntpd", "/usr/bin/ntpd", "/usr/sbin/ntpd"});
+  if (ntpd.empty()) {
+    std::ostringstream out;
+    out << "{\"ok\":true,\"enabled\":" << jsonBool(enabled)
+        << ",\"available\":false,\"applied\":false,\"reason\":\"ntpd_missing\"}\n";
+    return {0, out.str()};
+  }
+
+  CommandResult result;
+  if (enabled) {
+    const std::string sh = findExecutable({"/bin/sh", "/usr/bin/sh"});
+    if (sh.empty()) {
+      return {0, "{\"ok\":true,\"enabled\":true,\"available\":true,\"applied\":false,\"reason\":\"shell_missing\"}\n"};
+    }
+    result = runProgram(sh, {"-c", ntpd + " -p " + server + " >/tmp/suvos-ntpd.log 2>&1 &"});
+  } else {
+    const std::string killall = findExecutable({"/bin/killall", "/sbin/killall", "/usr/bin/killall", "/usr/sbin/killall"});
+    result = killall.empty() ? CommandResult{0, ""} : runProgram(killall, {"ntpd"});
+  }
+
+  std::ostringstream out;
+  out << "{\"ok\":true,\"enabled\":" << jsonBool(enabled)
+      << ",\"available\":true,\"applied\":" << jsonBool(result.code == 0)
+      << ",\"server\":\"" << jsonEscape(server) << "\"";
+  if (result.code != 0) {
+    out << ",\"details\":\"" << jsonEscape(trim(result.output)) << "\"";
+  }
+  out << "}\n";
+  return {0, out.str()};
 }
 
 long long nowEpoch() {
@@ -2573,7 +3443,7 @@ struct CalendarEventRecord {
 };
 
 bool validNotificationStatus(const std::string &status) {
-  return status == "unread" || status == "read" || status == "dismissed";
+  return status == "unread" || status == "read" || status == "dismissed" || status == "quiet";
 }
 
 bool validEventStatus(const std::string &status) {
@@ -2609,6 +3479,163 @@ bool validTextField(const std::string &value, size_t maxSize, bool allowEmpty) {
 bool ensureNotificationsDir() {
   ensureDir(kDataRoot, 0755);
   return ensureDir(kNotificationsDir, 0700);
+}
+
+struct NotificationPolicyRecord {
+  std::string targetType;
+  std::string target;
+  bool allowed = true;
+};
+
+std::vector<NotificationPolicyRecord> readNotificationPolicy() {
+  std::vector<NotificationPolicyRecord> records;
+  std::ifstream file(kNotificationPolicyPath);
+  std::string line;
+  while (std::getline(file, line)) {
+    auto fields = split(line, '\t');
+    if (fields.size() < 3) {
+      continue;
+    }
+    NotificationPolicyRecord record;
+    record.targetType = fields[0];
+    record.target = fields[1];
+    record.allowed = fields[2] != "0";
+    if ((record.targetType == "app" || record.targetType == "site" || record.targetType == "source") &&
+        validConfigValue(record.target, 256)) {
+      records.push_back(record);
+    }
+  }
+  return records;
+}
+
+bool writeNotificationPolicy(const std::vector<NotificationPolicyRecord> &records) {
+  if (!ensureNotificationsDir()) {
+    return false;
+  }
+  std::ostringstream out;
+  for (const auto &record : records) {
+    out << record.targetType << '\t'
+        << record.target << '\t'
+        << (record.allowed ? "1" : "0") << '\n';
+  }
+  return writeFile(kNotificationPolicyPath, out.str(), 0600);
+}
+
+bool notificationPolicyAllows(const NotificationRecord &record) {
+  for (const auto &policy : readNotificationPolicy()) {
+    bool matches = false;
+    if (policy.targetType == "app") {
+      matches = !record.appId.empty() && policy.target == record.appId;
+    } else if (policy.targetType == "site") {
+      matches = (!record.siteUrl.empty() && policy.target == record.siteUrl) ||
+                (!record.origin.empty() && policy.target == record.origin);
+    } else if (policy.targetType == "source") {
+      matches = policy.target == record.source;
+    }
+    if (matches) {
+      return policy.allowed;
+    }
+  }
+  return true;
+}
+
+bool quietModeActive() {
+  auto config = parseKeyValueFile(kNotificationSettingsPath);
+  const std::string enabled = optionValue(config, "quietEnabled");
+  if (!(enabled == "1" || enabled == "true" || enabled == "yes")) {
+    return false;
+  }
+  long long until = 0;
+  if (parseLongLong(optionValue(config, "quietUntilEpoch"), &until) && until > 0) {
+    return static_cast<long long>(std::time(nullptr)) <= until;
+  }
+  return true;
+}
+
+std::string notificationPolicyJson() {
+  ScopedFileLock lock(kStateLockPath);
+  if (!lock.locked()) {
+    return "{\"ok\":false,\"error\":\"state_lock_failed\"}\n";
+  }
+  auto settings = parseKeyValueFile(kNotificationSettingsPath);
+  auto records = readNotificationPolicy();
+  std::ostringstream out;
+  out << "{\"ok\":true,\"quietEnabled\":" << jsonBool(quietModeActive()) << ",";
+  out << "\"quietUntilEpoch\":\"" << jsonEscape(optionValue(settings, "quietUntilEpoch")) << "\",";
+  out << "\"rules\":[";
+  for (size_t i = 0; i < records.size(); ++i) {
+    if (i > 0) {
+      out << ",";
+    }
+    out << "{\"targetType\":\"" << jsonEscape(records[i].targetType) << "\",";
+    out << "\"target\":\"" << jsonEscape(records[i].target) << "\",";
+    out << "\"allowed\":" << jsonBool(records[i].allowed) << "}";
+  }
+  out << "]}\n";
+  return out.str();
+}
+
+CommandResult notificationPolicySet(const std::map<std::string, std::string> &options) {
+  const std::string targetType = optionValue(options, "targetType");
+  const std::string target = optionValue(options, "target");
+  const std::string allowedValue = optionValue(options, "allowed");
+  if ((targetType != "app" && targetType != "site" && targetType != "source") ||
+      target.empty() || !validConfigValue(target, 256)) {
+    return {2, "{\"ok\":false,\"error\":\"invalid_notification_policy\"}\n"};
+  }
+  const bool allowed = !(allowedValue == "0" || allowedValue == "false" || allowedValue == "no");
+  ScopedFileLock lock(kStateLockPath);
+  if (!lock.locked()) {
+    return {1, "{\"ok\":false,\"error\":\"state_lock_failed\"}\n"};
+  }
+  auto records = readNotificationPolicy();
+  bool found = false;
+  for (auto &record : records) {
+    if (record.targetType == targetType && record.target == target) {
+      record.allowed = allowed;
+      found = true;
+      break;
+    }
+  }
+  if (!found) {
+    records.push_back({targetType, target, allowed});
+  }
+  if (!writeNotificationPolicy(records)) {
+    return {1, "{\"ok\":false,\"error\":\"notification_policy_write_failed\"}\n"};
+  }
+  std::ostringstream out;
+  out << "{\"ok\":true,\"targetType\":\"" << jsonEscape(targetType)
+      << "\",\"target\":\"" << jsonEscape(target)
+      << "\",\"allowed\":" << jsonBool(allowed) << "}\n";
+  return {0, out.str()};
+}
+
+CommandResult notificationQuietSet(const std::map<std::string, std::string> &options) {
+  const std::string enabledValue = optionValue(options, "enabled");
+  const bool enabled = enabledValue == "1" || enabledValue == "true" ||
+                       enabledValue == "yes" || enabledValue == "on";
+  long long until = 0;
+  if (!optionValue(options, "untilEpoch").empty() &&
+      (!parseLongLong(optionValue(options, "untilEpoch"), &until) || until < 0)) {
+    return {2, "{\"ok\":false,\"error\":\"invalid_quiet_until\"}\n"};
+  }
+  ScopedFileLock lock(kStateLockPath);
+  if (!lock.locked()) {
+    return {1, "{\"ok\":false,\"error\":\"state_lock_failed\"}\n"};
+  }
+  if (!ensureNotificationsDir()) {
+    return {1, "{\"ok\":false,\"error\":\"notifications_state_unavailable\"}\n"};
+  }
+  std::ostringstream data;
+  data << "quietEnabled=" << (enabled ? "true" : "false") << "\n";
+  data << "quietUntilEpoch=" << until << "\n";
+  if (!writeFile(kNotificationSettingsPath, data.str(), 0600)) {
+    return {1, "{\"ok\":false,\"error\":\"notification_settings_write_failed\"}\n"};
+  }
+  std::ostringstream out;
+  out << "{\"ok\":true,\"quietEnabled\":" << jsonBool(enabled)
+      << ",\"quietUntilEpoch\":" << until << "}\n";
+  return {0, out.str()};
 }
 
 bool ensureCalendarDir() {
@@ -3021,6 +4048,27 @@ std::string notificationsJson(const std::map<std::string, std::string> &filters)
   return out.str();
 }
 
+std::string notificationUnreadCountJson(const std::map<std::string, std::string> &filters) {
+  generateDueCalendarNotifications();
+
+  ScopedFileLock lock(kStateLockPath);
+  if (!lock.locked()) {
+    return "{\"ok\":false,\"error\":\"state_lock_failed\"}\n";
+  }
+
+  size_t count = 0;
+  for (const auto &record : readNotifications()) {
+    if ((record.status == "unread" || record.status == "quiet") &&
+        notificationMatches(record, filters)) {
+      ++count;
+    }
+  }
+
+  std::ostringstream out;
+  out << "{\"ok\":true,\"unreadCount\":" << count << "}\n";
+  return out.str();
+}
+
 CommandResult notificationCreate(const std::map<std::string, std::string> &options) {
   ScopedFileLock lock(kStateLockPath);
   if (!lock.locked()) {
@@ -3053,6 +4101,17 @@ CommandResult notificationCreate(const std::map<std::string, std::string> &optio
   record.body = normalizedValue(options, "body", "", 1024);
   record.eventId = normalizedValue(options, "eventId", "", 96);
   record.meta = normalizedValue(options, "meta", "", 1024);
+
+  if (!notificationPolicyAllows(record)) {
+    std::ostringstream out;
+    out << "{\"ok\":true,\"created\":false,\"blocked\":true,\"source\":\""
+        << jsonEscape(record.source) << "\",\"origin\":\""
+        << jsonEscape(record.origin) << "\"}\n";
+    return {0, out.str()};
+  }
+  if (record.status == "unread" && quietModeActive()) {
+    record.status = "quiet";
+  }
 
   if (!validateNotificationRecord(record)) {
     return {2, "{\"ok\":false,\"error\":\"invalid_notification\"}\n"};
@@ -3544,6 +4603,9 @@ CommandResult handleCommand(const std::vector<std::string> &parts) {
     if (parts[1] == "configure") {
       return networkConfigure(parseOptions(parts, 2));
     }
+    if (parts[1] == "reconnect") {
+      return networkReconnect();
+    }
     const std::string iface = parts.size() >= 3 ? parts[2] : "";
     return networkAction(parts[1], iface);
   }
@@ -3564,6 +4626,14 @@ CommandResult handleCommand(const std::vector<std::string> &parts) {
     return {0, wifiConfigJson()};
   }
 
+  if (command == "wifi-saved-json") {
+    if (!hasPermission(policy, "status.read")) {
+      return {1, tr("permission.denied") + "status.read\n"};
+    }
+
+    return {0, wifiSavedJson()};
+  }
+
   if (command == "wifi-scan-json") {
     if (!hasPermission(policy, "status.read")) {
       return {1, tr("permission.denied") + "status.read\n"};
@@ -3582,8 +4652,11 @@ CommandResult handleCommand(const std::vector<std::string> &parts) {
     if (parts[1] == "connect") {
       return wifiConnect(parseOptions(parts, 2));
     }
+    if (parts[1] == "disconnect") {
+      return wifiDisconnect();
+    }
     if (parts[1] == "forget") {
-      return wifiForget();
+      return wifiForget(parseOptions(parts, 2));
     }
     const std::string iface = parts.size() >= 3 ? parts[2] : "";
     return wifiAction(parts[1], iface);
@@ -3654,6 +4727,14 @@ CommandResult handleCommand(const std::vector<std::string> &parts) {
     return {0, audioJson()};
   }
 
+  if (command == "audio-devices-json") {
+    if (!hasPermission(policy, "status.read")) {
+      return {1, tr("permission.denied") + "status.read\n"};
+    }
+
+    return {0, audioJson()};
+  }
+
   if (command == "audio") {
     if (parts.size() < 2) {
       return {2, "{\"ok\":false,\"error\":\"missing_audio_action\"}\n"};
@@ -3661,8 +4742,41 @@ CommandResult handleCommand(const std::vector<std::string> &parts) {
     if (!hasPermission(policy, "system.audio")) {
       return {1, tr("permission.denied") + "system.audio\n"};
     }
-    const std::string value = parts.size() >= 3 ? parts[2] : "";
-    return audioAction(parts[1], value);
+    auto options = parseOptions(parts, 2);
+    const std::string value = optionValue(options, "percent").empty()
+        ? (parts.size() >= 3 && parts[2].find('=') == std::string::npos ? parts[2] : "")
+        : optionValue(options, "percent");
+    if (parts[1] == "test") {
+      return audioTestSound(options);
+    }
+    return audioAction(parts[1], value, options);
+  }
+
+  if (command == "display-json") {
+    if (!hasPermission(policy, "system.display")) {
+      return {1, tr("permission.denied") + "system.display\n"};
+    }
+    return {0, displayJson()};
+  }
+
+  if (command == "render-json") {
+    if (!hasPermission(policy, "system.display")) {
+      return {1, tr("permission.denied") + "system.display\n"};
+    }
+    return {0, renderJson()};
+  }
+
+  if (command == "display") {
+    if (parts.size() < 2) {
+      return {2, "{\"ok\":false,\"error\":\"missing_display_action\"}\n"};
+    }
+    if (!hasPermission(policy, "system.display")) {
+      return {1, tr("permission.denied") + "system.display\n"};
+    }
+    if (parts[1] == "configure") {
+      return displayConfigure(parseOptions(parts, 2));
+    }
+    return {2, "{\"ok\":false,\"error\":\"unknown_display_action\"}\n"};
   }
 
   if (command == "datetime-json") {
@@ -3687,7 +4801,22 @@ CommandResult handleCommand(const std::vector<std::string> &parts) {
       auto options = parseOptions(parts, 2);
       return datetimeSetTimezone(optionValue(options, "timezone"));
     }
+    if (parts[1] == "format") {
+      auto options = parseOptions(parts, 2);
+      return datetimeSetFormat(optionValue(options, "format"));
+    }
+    if (parts[1] == "ntp") {
+      return datetimeSetNtp(parseOptions(parts, 2));
+    }
     return {2, "{\"ok\":false,\"error\":\"invalid_datetime_command\"}\n"};
+  }
+
+  if (command == "ntp-json") {
+    if (!hasPermission(policy, "status.read")) {
+      return {1, tr("permission.denied") + "status.read\n"};
+    }
+
+    return {0, ntpStatusJson()};
   }
 
   if (command == "notifications-json") {
@@ -3696,6 +4825,22 @@ CommandResult handleCommand(const std::vector<std::string> &parts) {
     }
 
     return {0, notificationsJson(parseOptions(parts, 1))};
+  }
+
+  if (command == "notifications-unread-count-json") {
+    if (!hasPermission(policy, "notifications.read")) {
+      return {1, tr("permission.denied") + "notifications.read\n"};
+    }
+
+    return {0, notificationUnreadCountJson(parseOptions(parts, 1))};
+  }
+
+  if (command == "notification-policy-json") {
+    if (!hasPermission(policy, "notifications.read")) {
+      return {1, tr("permission.denied") + "notifications.read\n"};
+    }
+
+    return {0, notificationPolicyJson()};
   }
 
   if (command == "notification") {
@@ -3726,6 +4871,12 @@ CommandResult handleCommand(const std::vector<std::string> &parts) {
     }
     if (action == "dismiss") {
       return notificationSetStatus(id, "dismissed");
+    }
+    if (action == "policy") {
+      return notificationPolicySet(options);
+    }
+    if (action == "quiet") {
+      return notificationQuietSet(options);
     }
     return {2, "{\"ok\":false,\"error\":\"unknown_notification_action\"}\n"};
   }
@@ -3778,6 +4929,18 @@ CommandResult handleCommand(const std::vector<std::string> &parts) {
       return {2, "missing power action\n"};
     }
     const std::string &action = parts[1];
+    if (action == "status") {
+      if (!hasPermission(policy, "system.power")) {
+        return {1, tr("permission.denied") + "system.power\n"};
+      }
+      return {0, powerStatusJson()};
+    }
+    if (action == "configure") {
+      if (!hasPermission(policy, "system.power")) {
+        return {1, tr("permission.denied") + "system.power\n"};
+      }
+      return powerConfigure(parseOptions(parts, 2));
+    }
     if (action != "shutdown" && action != "reboot" && action != "logout") {
       return {2, "unknown power action: " + action + "\n"};
     }
@@ -3785,6 +4948,47 @@ CommandResult handleCommand(const std::vector<std::string> &parts) {
       return {1, tr("permission.denied") + "system.power\n"};
     }
     return powerAction(action);
+  }
+
+  if (command == "storage-json") {
+    if (!hasPermission(policy, "system.storage")) {
+      return {1, tr("permission.denied") + "system.storage\n"};
+    }
+    return {0, storageJson()};
+  }
+
+  if (command == "storage") {
+    if (parts.size() < 2 || parts[1] != "cleanup") {
+      return {2, "{\"ok\":false,\"error\":\"unknown_storage_action\"}\n"};
+    }
+    if (!hasPermission(policy, "system.storage")) {
+      return {1, tr("permission.denied") + "system.storage\n"};
+    }
+    return storageCleanup(parseOptions(parts, 2));
+  }
+
+  if (command == "versions-json") {
+    if (!hasPermission(policy, "status.read")) {
+      return {1, tr("permission.denied") + "status.read\n"};
+    }
+    return {0, versionsJson()};
+  }
+
+  if (command == "logs-json") {
+    if (!hasPermission(policy, "system.logs")) {
+      return {1, tr("permission.denied") + "system.logs\n"};
+    }
+    return {0, logsJson()};
+  }
+
+  if (command == "logging") {
+    if (parts.size() < 2 || parts[1] != "configure") {
+      return {2, "{\"ok\":false,\"error\":\"unknown_logging_action\"}\n"};
+    }
+    if (!hasPermission(policy, "system.logs")) {
+      return {1, tr("permission.denied") + "system.logs\n"};
+    }
+    return loggingConfigure(parseOptions(parts, 2));
   }
 
   if (command == "roles" || command == "role") {
@@ -4211,6 +5415,27 @@ void applySavedRuntimeState() {
   if (!wifiConfig.empty()) {
     CommandResult result = applyWifiConfig(wifiConfig);
     logConsole("wifi reapply exit=" + std::to_string(result.code));
+  }
+
+  auto timeConfig = parseKeyValueFile(kTimeConfigPath);
+  if (optionValue(timeConfig, "ntpEnabled") == "true") {
+    CommandResult result = datetimeSetNtp({
+        {"enabled", "true"},
+        {"server", optionValue(timeConfig, "ntpServer").empty()
+            ? "pool.ntp.org" : optionValue(timeConfig, "ntpServer")}});
+    logConsole("ntp reapply exit=" + std::to_string(result.code));
+  }
+
+  auto powerConfig = parseKeyValueFile(kPowerConfigPath);
+  if (!powerConfig.empty()) {
+    CommandResult result = powerConfigure(powerConfig);
+    logConsole("power reapply exit=" + std::to_string(result.code));
+  }
+
+  auto displayConfig = parseKeyValueFile(kDisplayConfigPath);
+  if (!displayConfig.empty()) {
+    CommandResult result = displayConfigure(displayConfig);
+    logConsole("display reapply exit=" + std::to_string(result.code));
   }
 }
 

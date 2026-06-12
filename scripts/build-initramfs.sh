@@ -155,7 +155,7 @@ for applet in sh ash ls mkdir rmdir pwd cat echo printf touch rm cp mv chmod cho
   grep sed awk head tail find date clear mount umount dmesg sleep uname reboot \
   poweroff halt id whoami env true false test '[' basename dirname ps kill sync \
   mkfifo cut tail sort tee ifconfig route udhcpc ip killall pidof wget insmod lsmod \
-  rmmod readlink; do
+  rmmod readlink df du setterm; do
   ln -sf busybox "$ROOTFS/bin/$applet"
 done
 ln -sf /bin/env "$ROOTFS/usr/bin/env"

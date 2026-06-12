@@ -91,6 +91,9 @@ fetch_or_die /tmp/suvos-http-system-network-configure.out --post-data='' 'http:/
 cat /tmp/suvos-http-system-network-configure.out
 grep -q '"ok":true' /tmp/suvos-http-system-network-configure.out
 grep -q '"configured":true' /tmp/suvos-http-system-network-configure.out
+fetch_or_die /tmp/suvos-http-system-network-reconnect.out --post-data='' http://suv.os/api/system/network/reconnect
+cat /tmp/suvos-http-system-network-reconnect.out
+grep -q '"ok":true' /tmp/suvos-http-system-network-reconnect.out
 if [ "$(cmdline_value suvos.autotest_network)" = "1" ]; then
   network_iface=""
   for candidate in /sys/class/net/*; do
@@ -123,6 +126,17 @@ if grep -q 'test-pass' /tmp/suvos-http-system-wifi-connect.out; then
   echo "wifi PSK leaked through API response"
   exit 1
 fi
+wget -q -O /tmp/suvos-http-system-wifi-saved.out http://suv.os/api/system/wifi/saved
+cat /tmp/suvos-http-system-wifi-saved.out
+grep -q '"ok":true' /tmp/suvos-http-system-wifi-saved.out
+grep -q '"ssid":"SuvOS-Test"' /tmp/suvos-http-system-wifi-saved.out
+if grep -q 'test-pass' /tmp/suvos-http-system-wifi-saved.out; then
+  echo "wifi PSK leaked through saved networks API response"
+  exit 1
+fi
+wget -q -O /tmp/suvos-http-system-wifi-disconnect.out --post-data='' http://suv.os/api/system/wifi/disconnect
+cat /tmp/suvos-http-system-wifi-disconnect.out
+grep -q '"ok":true' /tmp/suvos-http-system-wifi-disconnect.out
 wget -q -O /tmp/suvos-http-system-wifi-forget.out --post-data='' http://suv.os/api/system/wifi/forget
 cat /tmp/suvos-http-system-wifi-forget.out
 grep -q '"ok":true' /tmp/suvos-http-system-wifi-forget.out
@@ -147,11 +161,30 @@ grep -q '"ok":true' /tmp/suvos-http-system-brightness.out
 wget -q -O /tmp/suvos-http-system-audio.out http://suv.os/api/system/audio
 cat /tmp/suvos-http-system-audio.out
 grep -q '"ok":true' /tmp/suvos-http-system-audio.out
+wget -q -O /tmp/suvos-http-system-audio-devices.out http://suv.os/api/system/audio/devices
+cat /tmp/suvos-http-system-audio-devices.out
+grep -q '"ok":true' /tmp/suvos-http-system-audio-devices.out
+grep -q '"outputs":' /tmp/suvos-http-system-audio-devices.out
+wget -q -O /tmp/suvos-http-system-audio-test.out --post-data='' http://suv.os/api/system/audio/test
+cat /tmp/suvos-http-system-audio-test.out
+grep -q '"ok":true' /tmp/suvos-http-system-audio-test.out
+wget -q -O /tmp/suvos-http-system-display.out http://suv.os/api/system/display
+cat /tmp/suvos-http-system-display.out
+grep -q '"ok":true' /tmp/suvos-http-system-display.out
+grep -q '"outputs":' /tmp/suvos-http-system-display.out
+wget -q -O /tmp/suvos-http-system-render.out http://suv.os/api/system/render
+cat /tmp/suvos-http-system-render.out
+grep -q '"ok":true' /tmp/suvos-http-system-render.out
+grep -q '"renderProfile":' /tmp/suvos-http-system-render.out
+wget -q -O /tmp/suvos-http-system-display-configure.out --post-data='' 'http://suv.os/api/system/display/configure?width=1024&height=768&scale=1&orientation=normal'
+cat /tmp/suvos-http-system-display-configure.out
+grep -q '"ok":true' /tmp/suvos-http-system-display-configure.out
 wget -q -O /tmp/suvos-http-system-datetime.out http://suv.os/api/system/datetime
 cat /tmp/suvos-http-system-datetime.out
 grep -q '"ok":true' /tmp/suvos-http-system-datetime.out
 grep -q '"canSet":true' /tmp/suvos-http-system-datetime.out
 grep -q '"timezoneManaged":true' /tmp/suvos-http-system-datetime.out
+grep -q '"format":' /tmp/suvos-http-system-datetime.out
 wget -q -O /tmp/suvos-http-system-network-enable.out --post-data='' http://suv.os/api/system/network/enable
 cat /tmp/suvos-http-system-network-enable.out
 grep -q '"ok":true' /tmp/suvos-http-system-network-enable.out
@@ -178,6 +211,44 @@ grep -q '"applied":true' /tmp/suvos-http-system-timezone.out
 wget -q -O /tmp/suvos-http-system-datetime-utc.out http://suv.os/api/system/datetime
 cat /tmp/suvos-http-system-datetime-utc.out
 grep -q '"configuredTimezone":"UTC"' /tmp/suvos-http-system-datetime-utc.out
+wget -q -O /tmp/suvos-http-system-time-format.out --post-data='' 'http://suv.os/api/system/datetime/format?format=12h'
+cat /tmp/suvos-http-system-time-format.out
+grep -q '"ok":true' /tmp/suvos-http-system-time-format.out
+grep -q '"format":"12h"' /tmp/suvos-http-system-time-format.out
+wget -q -O /tmp/suvos-http-system-ntp.out http://suv.os/api/system/datetime/ntp
+cat /tmp/suvos-http-system-ntp.out
+grep -q '"ok":true' /tmp/suvos-http-system-ntp.out
+wget -q -O /tmp/suvos-http-system-ntp-set.out --post-data='' 'http://suv.os/api/system/datetime/ntp?enabled=true&server=pool.ntp.org'
+cat /tmp/suvos-http-system-ntp-set.out
+grep -q '"ok":true' /tmp/suvos-http-system-ntp-set.out
+wget -q -O /tmp/suvos-http-system-power.out http://suv.os/api/system/power
+cat /tmp/suvos-http-system-power.out
+grep -q '"ok":true' /tmp/suvos-http-system-power.out
+grep -q '"battery":' /tmp/suvos-http-system-power.out
+wget -q -O /tmp/suvos-http-system-power-configure.out --post-data='' 'http://suv.os/api/system/power/configure?profile=balanced&sleepTimeoutSeconds=0&blankScreenTimeoutSeconds=0'
+cat /tmp/suvos-http-system-power-configure.out
+grep -q '"ok":true' /tmp/suvos-http-system-power-configure.out
+wget -q -O /tmp/suvos-http-system-storage.out http://suv.os/api/system/storage
+cat /tmp/suvos-http-system-storage.out
+grep -q '"ok":true' /tmp/suvos-http-system-storage.out
+grep -q '"safeCleanupTargets":' /tmp/suvos-http-system-storage.out
+mkdir -p /data/suvos/cache/autotest
+printf 'cache-test\n' >/data/suvos/cache/autotest/sample.txt
+wget -q -O /tmp/suvos-http-system-storage-cleanup.out --post-data='' 'http://suv.os/api/system/storage/cleanup?target=cache'
+cat /tmp/suvos-http-system-storage-cleanup.out
+grep -q '"ok":true' /tmp/suvos-http-system-storage-cleanup.out
+test ! -e /data/suvos/cache/autotest/sample.txt
+wget -q -O /tmp/suvos-http-system-versions.out http://suv.os/api/system/versions
+cat /tmp/suvos-http-system-versions.out
+grep -q '"ok":true' /tmp/suvos-http-system-versions.out
+grep -q '"suvos":' /tmp/suvos-http-system-versions.out
+wget -q -O /tmp/suvos-http-system-logs.out http://suv.os/api/system/logs
+cat /tmp/suvos-http-system-logs.out
+grep -q '"ok":true' /tmp/suvos-http-system-logs.out
+wget -q -O /tmp/suvos-http-system-logging.out --post-data='' 'http://suv.os/api/system/logging?level=debug'
+cat /tmp/suvos-http-system-logging.out
+grep -q '"ok":true' /tmp/suvos-http-system-logging.out
+grep -q '"level":"debug"' /tmp/suvos-http-system-logging.out
 wget -q -O /tmp/suvos-http-notifications-clear-start.out --post-data='' http://suv.os/api/notifications/clear
 cat /tmp/suvos-http-notifications-clear-start.out
 grep -q '"ok":true' /tmp/suvos-http-notifications-clear-start.out
@@ -219,6 +290,33 @@ wget -q -O /tmp/suvos-http-notification-delete.out --post-data='' "http://suv.os
 cat /tmp/suvos-http-notification-delete.out
 grep -q '"ok":true' /tmp/suvos-http-notification-delete.out
 grep -q '"deleted":1' /tmp/suvos-http-notification-delete.out
+wget -q -O /tmp/suvos-http-notification-policy-set.out --post-data='' 'http://suv.os/api/notifications/policy/set?targetType=site&target=blocked.test&allowed=false'
+cat /tmp/suvos-http-notification-policy-set.out
+grep -q '"ok":true' /tmp/suvos-http-notification-policy-set.out
+grep -q '"allowed":false' /tmp/suvos-http-notification-policy-set.out
+wget -q -O /tmp/suvos-http-notification-policy.out http://suv.os/api/notifications/policy
+cat /tmp/suvos-http-notification-policy.out
+grep -q '"target":"blocked.test"' /tmp/suvos-http-notification-policy.out
+wget -q -O /tmp/suvos-http-notification-blocked.out --post-data='' 'http://suv.os/api/notifications/create?source=site&origin=blocked.test&type=info&title=BlockedNotice&body=Nope'
+cat /tmp/suvos-http-notification-blocked.out
+grep -q '"ok":true' /tmp/suvos-http-notification-blocked.out
+grep -q '"blocked":true' /tmp/suvos-http-notification-blocked.out
+wget -q -O /tmp/suvos-http-notification-quiet-on.out --post-data='' 'http://suv.os/api/notifications/quiet?enabled=true'
+cat /tmp/suvos-http-notification-quiet-on.out
+grep -q '"ok":true' /tmp/suvos-http-notification-quiet-on.out
+wget -q -O /tmp/suvos-http-notification-quiet-create.out --post-data='' 'http://suv.os/api/notifications/create?source=system&origin=suvos.system&type=info&title=QuietNotice&body=Silent'
+cat /tmp/suvos-http-notification-quiet-create.out
+grep -q '"status":"quiet"' /tmp/suvos-http-notification-quiet-create.out
+wget -q -O /tmp/suvos-http-notification-unread-count.out 'http://suv.os/api/notifications/unread-count?source=system'
+cat /tmp/suvos-http-notification-unread-count.out
+grep -q '"ok":true' /tmp/suvos-http-notification-unread-count.out
+grep -q '"unreadCount":' /tmp/suvos-http-notification-unread-count.out
+wget -q -O /tmp/suvos-http-notification-quiet-clear.out --post-data='' 'http://suv.os/api/notifications/clear?status=quiet'
+cat /tmp/suvos-http-notification-quiet-clear.out
+grep -q '"ok":true' /tmp/suvos-http-notification-quiet-clear.out
+wget -q -O /tmp/suvos-http-notification-quiet-off.out --post-data='' 'http://suv.os/api/notifications/quiet?enabled=false'
+cat /tmp/suvos-http-notification-quiet-off.out
+grep -q '"ok":true' /tmp/suvos-http-notification-quiet-off.out
 now_epoch="$(date +%s)"
 due_epoch=$((now_epoch - 5))
 wget -q -O /tmp/suvos-http-calendar-create.out --post-data='' "http://suv.os/api/calendar/events/create?source=calendar&origin=suvos.calendar&type=goal&title=DailyGoal&description=DoThing&startEpoch=$due_epoch&endEpoch=$due_epoch"
