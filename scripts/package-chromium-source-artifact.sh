@@ -83,6 +83,107 @@ copy_with_target() {
   fi
 }
 
+copy_host_runtime_lib() {
+  src="$1"
+  dest_dir="$2"
+  [ -e "$src" ] || return 0
+  mkdir -p "$dest_dir"
+  cp -a "$src" "$dest_dir/" 2>/dev/null || true
+  resolved="$(readlink -f "$src" 2>/dev/null || true)"
+  if [ -n "$resolved" ] && [ "$resolved" != "$src" ] && [ -e "$resolved" ]; then
+    cp -a "$resolved" "$dest_dir/" 2>/dev/null || true
+  fi
+}
+
+copy_host_runtime_dir() {
+  src="$1"
+  dest="$2"
+  [ -d "$src" ] || return 0
+  mkdir -p "$dest"
+  cp -a "$src/." "$dest/"
+}
+
+copy_host_ldd_dependencies() {
+  binary="$1"
+  runtime="$2"
+
+  ldd "$binary" 2>/dev/null |
+    awk '/=> \// || /^[[:space:]]*\// { for (i = 1; i <= NF; i++) if ($i ~ /^\//) print $i }' |
+    sort -u |
+    while IFS= read -r lib; do
+      copy_host_runtime_lib "$lib" "$runtime/lib"
+    done
+}
+
+package_host_runtime() {
+  chrome_bin="$1"
+  runtime="$2"
+  host_multiarch="$(gcc -print-multiarch 2>/dev/null || printf '%s\n' "$DEBIAN_MULTIARCH")"
+
+  command -v ldd >/dev/null 2>&1 || return 1
+  ldd "$chrome_bin" >/dev/null 2>&1 || return 1
+
+  mkdir -p "$runtime/lib" "$runtime/lib64" "$runtime/usr/lib/$host_multiarch" "$runtime/usr/share/glvnd"
+
+  for loader in /lib64/$GLIBC_LOADER /lib/$host_multiarch/$GLIBC_LOADER /usr/lib/$host_multiarch/$GLIBC_LOADER; do
+    [ -e "$loader" ] || continue
+    cp -L "$loader" "$runtime/lib64/$GLIBC_LOADER"
+    cp -L "$loader" "$runtime/lib/$GLIBC_LOADER"
+    break
+  done
+
+  copy_host_ldd_dependencies "$chrome_bin" "$runtime"
+
+  for lib_dir in /lib/$host_multiarch /usr/lib/$host_multiarch; do
+    [ -d "$lib_dir" ] || continue
+    for pattern in \
+      "libEGL*.so*" \
+      "libGL*.so*" \
+      "libGLES*.so*" \
+      "libgallium*.so*" \
+      "libwayland*.so*" \
+      "libdrm*.so*" \
+      "libgbm*.so*" \
+      "libxshmfence*.so*" \
+      "libxcb*.so*"; do
+      for lib in "$lib_dir"/$pattern; do
+        [ -e "$lib" ] || continue
+        copy_host_runtime_lib "$lib" "$runtime/lib"
+      done
+    done
+  done
+
+  copy_host_runtime_dir "/usr/lib/$host_multiarch/dri" "$runtime/usr/lib/$host_multiarch/dri"
+  copy_host_runtime_dir "/usr/lib/$host_multiarch/gbm" "$runtime/usr/lib/$host_multiarch/gbm"
+  copy_host_runtime_dir /usr/share/glvnd/egl_vendor.d "$runtime/usr/share/glvnd/egl_vendor.d"
+
+  for _ in 1 2; do
+    find "$runtime" -type f \( -name '*.so' -o -name '*.so.*' \) -print |
+      while IFS= read -r runtime_lib; do
+        copy_host_ldd_dependencies "$runtime_lib" "$runtime"
+      done
+  done
+
+  [ -x "$runtime/lib64/$GLIBC_LOADER" ]
+}
+
+patch_host_runtime_interpreters() {
+  chrome_dir="$1"
+  interpreter="$2"
+
+  command -v patchelf >/dev/null 2>&1 || {
+    echo "patchelf is required when SUVOS_CHROMIUM_RUNTIME_SOURCE=host" >&2
+    return 1
+  }
+
+  find "$chrome_dir" -maxdepth 2 -type f -perm /111 -print |
+    while IFS= read -r file; do
+      if readelf -l "$file" 2>/dev/null | grep -q 'Requesting program interpreter'; then
+        patchelf --set-interpreter "$interpreter" "$file"
+      fi
+    done
+}
+
 [ -d "$CHROMIUM_REPO" ] || {
   echo "Chromium checkout does not exist: $CHROMIUM_REPO" >&2
   exit 1
@@ -135,6 +236,7 @@ mkdir -p \
   "$STAGE/usr/bin" \
   "$STAGE/usr/lib" \
   "$STAGE/opt/suvos-chromium/sysroot" \
+  "$STAGE/opt/suvos-chromium/runtime" \
   "$STAGE/usr/share/doc/suvos-chromium"
 
 ln -sfn /opt/chromium.org/chromium "$STAGE/usr/lib/chromium"
@@ -165,25 +267,57 @@ for name in \
   copy_with_target "$SYSROOT/usr/lib/$DEBIAN_MULTIARCH/$name" "$STAGE/lib/$DEBIAN_MULTIARCH"
 done
 
+CHROMIUM_RUNTIME_SOURCE="${SUVOS_CHROMIUM_RUNTIME_SOURCE:-host}"
+CHROMIUM_RUNTIME_STATUS=none
+if [ "$CHROMIUM_RUNTIME_SOURCE" = "host" ]; then
+  if package_host_runtime "$STAGE/opt/chromium.org/chromium/chrome" "$STAGE/opt/suvos-chromium/runtime"; then
+    patch_host_runtime_interpreters \
+      "$STAGE/opt/chromium.org/chromium" \
+      "/opt/suvos-chromium/runtime/lib64/$GLIBC_LOADER"
+    CHROMIUM_RUNTIME_STATUS=host
+  else
+    rm -rf "$STAGE/opt/suvos-chromium/runtime"
+    mkdir -p "$STAGE/opt/suvos-chromium/runtime"
+    CHROMIUM_RUNTIME_STATUS=sysroot
+    echo "warning: could not package host Chromium runtime; falling back to Chromium sysroot" >&2
+  fi
+elif [ "$CHROMIUM_RUNTIME_SOURCE" != "sysroot" ]; then
+  echo "unsupported SUVOS_CHROMIUM_RUNTIME_SOURCE: $CHROMIUM_RUNTIME_SOURCE" >&2
+  exit 2
+else
+  CHROMIUM_RUNTIME_STATUS=sysroot
+fi
+
 cat >"$STAGE/usr/bin/chromium" <<EOF
 #!/bin/sh
 CHROME_DIR=/opt/chromium.org/chromium
 SYSROOT=/opt/suvos-chromium/sysroot
+RUNTIME=/opt/suvos-chromium/runtime
 DEBIAN_MULTIARCH=$DEBIAN_MULTIARCH
-LOADER="\$SYSROOT/lib64/$GLIBC_LOADER"
-[ -x "\$LOADER" ] || LOADER=/lib64/$GLIBC_LOADER
-
-LIB_PATH="\$CHROME_DIR:\$CHROME_DIR/lib:\$SYSROOT/lib/\$DEBIAN_MULTIARCH:\$SYSROOT/usr/lib/\$DEBIAN_MULTIARCH:\$SYSROOT/usr/lib"
+LOADER="\$RUNTIME/lib64/$GLIBC_LOADER"
+if [ -x "\$LOADER" ]; then
+  LIB_PATH="\$CHROME_DIR:\$CHROME_DIR/lib:\$RUNTIME/lib:\$RUNTIME/usr/lib/\$DEBIAN_MULTIARCH:\$RUNTIME/usr/lib/\$DEBIAN_MULTIARCH/dri:\$RUNTIME/usr/lib/\$DEBIAN_MULTIARCH/gbm:\$RUNTIME/usr/lib"
+else
+  LOADER="\$SYSROOT/lib64/$GLIBC_LOADER"
+  [ -x "\$LOADER" ] || LOADER=/lib64/$GLIBC_LOADER
+  LIB_PATH="\$CHROME_DIR:\$CHROME_DIR/lib:\$SYSROOT/lib/\$DEBIAN_MULTIARCH:\$SYSROOT/usr/lib/\$DEBIAN_MULTIARCH:\$SYSROOT/usr/lib/\$DEBIAN_MULTIARCH/dri:\$SYSROOT/usr/lib/\$DEBIAN_MULTIARCH/gbm:\$SYSROOT/usr/lib"
+fi
 export CHROME_WRAPPER=/usr/bin/chromium
 export CHROME_VERSION_EXTRA="\${CHROME_VERSION_EXTRA:-suvos}"
 export GNOME_DISABLE_CRASH_DIALOG=SET_BY_SUVOS
 export LD_LIBRARY_PATH="\$LIB_PATH\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"
 
-[ -d "\$SYSROOT/usr/lib/\$DEBIAN_MULTIARCH/dri" ] && export LIBGL_DRIVERS_PATH="\${LIBGL_DRIVERS_PATH:-\$SYSROOT/usr/lib/\$DEBIAN_MULTIARCH/dri}"
-[ -d "\$SYSROOT/usr/lib/\$DEBIAN_MULTIARCH/gbm" ] && export GBM_BACKENDS_PATH="\${GBM_BACKENDS_PATH:-\$SYSROOT/usr/lib/\$DEBIAN_MULTIARCH/gbm}"
-[ -d "\$SYSROOT/usr/share/glvnd/egl_vendor.d" ] && export __EGL_VENDOR_LIBRARY_DIRS="\${__EGL_VENDOR_LIBRARY_DIRS:-\$SYSROOT/usr/share/glvnd/egl_vendor.d}"
-
-exec "\$LOADER" --library-path "\$LIB_PATH" "\$CHROME_DIR/chrome" "\$@"
+if [ -x "\$RUNTIME/lib64/$GLIBC_LOADER" ]; then
+  [ -d "\$RUNTIME/usr/lib/\$DEBIAN_MULTIARCH/dri" ] && export LIBGL_DRIVERS_PATH="\${LIBGL_DRIVERS_PATH:-\$RUNTIME/usr/lib/\$DEBIAN_MULTIARCH/dri}"
+  [ -d "\$RUNTIME/usr/lib/\$DEBIAN_MULTIARCH/gbm" ] && export GBM_BACKENDS_PATH="\${GBM_BACKENDS_PATH:-\$RUNTIME/usr/lib/\$DEBIAN_MULTIARCH/gbm}"
+  [ -d "\$RUNTIME/usr/share/glvnd/egl_vendor.d" ] && export __EGL_VENDOR_LIBRARY_DIRS="\${__EGL_VENDOR_LIBRARY_DIRS:-\$RUNTIME/usr/share/glvnd/egl_vendor.d}"
+  exec "\$CHROME_DIR/chrome" "\$@"
+else
+  [ -d "\$SYSROOT/usr/lib/\$DEBIAN_MULTIARCH/dri" ] && export LIBGL_DRIVERS_PATH="\${LIBGL_DRIVERS_PATH:-\$SYSROOT/usr/lib/\$DEBIAN_MULTIARCH/dri}"
+  [ -d "\$SYSROOT/usr/lib/\$DEBIAN_MULTIARCH/gbm" ] && export GBM_BACKENDS_PATH="\${GBM_BACKENDS_PATH:-\$SYSROOT/usr/lib/\$DEBIAN_MULTIARCH/gbm}"
+  [ -d "\$SYSROOT/usr/share/glvnd/egl_vendor.d" ] && export __EGL_VENDOR_LIBRARY_DIRS="\${__EGL_VENDOR_LIBRARY_DIRS:-\$SYSROOT/usr/share/glvnd/egl_vendor.d}"
+  exec "\$LOADER" --library-path "\$LIB_PATH" "\$CHROME_DIR/chrome" "\$@"
+fi
 EOF
 chmod 0755 "$STAGE/usr/bin/chromium"
 ln -sfn chromium "$STAGE/usr/bin/chromium-browser"
@@ -203,6 +337,7 @@ chromium_commit=$(git -C "$CHROMIUM_REPO" rev-parse HEAD 2>/dev/null || echo unk
 chromium_out=$OUT_DIR
 chromium_deb=$DEB
 sysroot=$SYSROOT
+runtime=$CHROMIUM_RUNTIME_STATUS
 created_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
 

@@ -14,15 +14,25 @@ IMAGE="${SUVOS_CPP_BUILDER_IMAGE:-alpine:3.22}"
 
 mkdir -p "$OUT_DIR"
 
+file_mtime() {
+  stat -c '%Y' "$1" 2>/dev/null || stat -f '%m' "$1" 2>/dev/null || echo 0
+}
+
 newest_source() {
-  find "$SRC_DIR" -type f \( -name '*.cpp' -o -name '*.h' \) -print0 |
-    xargs -0 stat -f '%m' 2>/dev/null | sort -nr | head -1
+  local file mtime newest=0
+  while IFS= read -r -d '' file; do
+    mtime="$(file_mtime "$file")"
+    if [ "$mtime" -gt "$newest" ]; then
+      newest="$mtime"
+    fi
+  done < <(find "$SRC_DIR" -type f \( -name '*.cpp' -o -name '*.h' \) -print0)
+  printf '%s\n' "$newest"
 }
 
 source_is_newer_than_out() {
   [ -x "$OUT" ] || return 0
   local out_mtime newest
-  out_mtime="$(stat -f '%m' "$OUT" 2>/dev/null || echo 0)"
+  out_mtime="$(file_mtime "$OUT")"
   newest="$(newest_source)"
   [ -z "$newest" ] && return 1
   [ "$newest" -gt "$out_mtime" ]

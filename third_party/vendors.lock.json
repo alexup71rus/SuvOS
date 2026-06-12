@@ -11,7 +11,7 @@
     "chromium": {
       "path": "third_party/chromium",
       "repo": "https://github.com/alexup71rus/SuvOS_Chromium.git",
-      "ref": "38088b555207cb0c2ad6d479cd0395041925d59a",
+      "ref": "9ae477219678618719aaf5654f8d760c16fa442a",
       "tag": null,
       "optional": false,
       "bootstrap": true,

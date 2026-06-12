@@ -43,4 +43,9 @@ fi
   exit 1
 }
 
-tar -C "$ROOTFS" -xzf "$CHROMIUM_DIST"
+tar_args=(-xzf "$CHROMIUM_DIST")
+if tar --version 2>/dev/null | grep -q 'GNU tar'; then
+  tar_args=(--warning=no-timestamp "${tar_args[@]}")
+fi
+
+tar -C "$ROOTFS" "${tar_args[@]}"

@@ -41,6 +41,70 @@ cmdline_value() {
   return 0
 }
 
+chromium_artifact_vendor() {
+  build_info=/usr/share/doc/suvos-chromium/build-info.txt
+  [ -r "$build_info" ] || return 0
+  sed -n 's/^vendor=//p' "$build_info" | sed -n '1p'
+}
+
+dump_exit_diagnostics() {
+  if command -v dmesg >/dev/null 2>&1; then
+    echo "suvos-gui: exit kernel diagnostics begin"
+    dmesg | tail -n 80 || true
+    echo "suvos-gui: exit kernel diagnostics end"
+  fi
+}
+
+run_chromium_probe() {
+  probe_profile="$BROWSER_HOME/probe-profile"
+  rm -rf "$probe_profile"
+  mkdir -p "$probe_profile"
+  chown -R "$BROWSER_USER:$BROWSER_USER" "$probe_profile"
+
+  echo "suvos-gui: chromium probe: version begin"
+  su-exec "$BROWSER_USER" "$CHROMIUM_BIN" --version
+  version_rc="$?"
+  echo "suvos-gui: chromium probe: version rc=$version_rc"
+
+  echo "suvos-gui: chromium probe: headless begin"
+  rm -f /tmp/suvos-chromium-probe.out /tmp/suvos-chromium-probe.err
+  su-exec "$BROWSER_USER" "$CHROMIUM_BIN" \
+    --headless \
+    --disable-gpu \
+    --disable-dev-shm-usage \
+    --no-first-run \
+    --user-data-dir="$probe_profile" \
+    --dump-dom about:blank \
+    >/tmp/suvos-chromium-probe.out 2>/tmp/suvos-chromium-probe.err &
+  probe_pid="$!"
+  probe_rc=""
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    if ! kill -0 "$probe_pid" 2>/dev/null; then
+      wait "$probe_pid"
+      probe_rc="$?"
+      break
+    fi
+    sleep 1
+  done
+  if [ -z "$probe_rc" ]; then
+    echo "suvos-gui: chromium probe: headless timeout"
+    kill "$probe_pid" 2>/dev/null || true
+    wait "$probe_pid" 2>/dev/null || true
+    probe_rc=124
+  fi
+  echo "suvos-gui: chromium probe: headless rc=$probe_rc"
+  if [ -s /tmp/suvos-chromium-probe.err ]; then
+    echo "suvos-gui: chromium probe stderr begin"
+    tail -n 80 /tmp/suvos-chromium-probe.err || true
+    echo "suvos-gui: chromium probe stderr end"
+  fi
+  if [ -s /tmp/suvos-chromium-probe.out ]; then
+    echo "suvos-gui: chromium probe stdout begin"
+    head -n 20 /tmp/suvos-chromium-probe.out || true
+    echo "suvos-gui: chromium probe stdout end"
+  fi
+}
+
 prepare_chromium_sandbox() {
   for sandbox in /usr/lib/chromium/chrome-sandbox /usr/lib/chromium/chrome_sandbox; do
     [ -f "$sandbox" ] || continue
@@ -248,7 +312,7 @@ SUVOS_RENDER_PROFILE="${SUVOS_RENDER_PROFILE:-$(cmdline_value suvos.render)}"
 [ -n "$SUVOS_RENDER_PROFILE" ] || SUVOS_RENDER_PROFILE=hardware
 
 case "$SUVOS_RENDER_PROFILE" in
-  hardware|qemu-tcg|qemu-hvf) ;;
+  hardware|qemu-tcg|qemu-hvf|qemu-whpx) ;;
   *)
     echo "suvos-gui: unsupported render profile: $SUVOS_RENDER_PROFILE"
     exit 1
@@ -259,6 +323,47 @@ echo "suvos-gui: render profile: $SUVOS_RENDER_PROFILE"
 
 prepare_chromium_sandbox || exit 1
 CHROMIUM_ENV_PREFIX=""
+CHROMIUM_ARTIFACT_VENDOR="$(chromium_artifact_vendor)"
+CHROMIUM_GL_MODE="${SUVOS_CHROMIUM_GL_MODE:-$(cmdline_value suvos.chromium_gl)}"
+CHROMIUM_PROBE="${SUVOS_CHROMIUM_PROBE:-$(cmdline_value suvos.chromium_probe)}"
+GUI_PROBE="${SUVOS_GUI_PROBE:-$(cmdline_value suvos.gui_probe)}"
+
+if [ "$CHROMIUM_PROBE" = "1" ]; then
+  run_chromium_probe
+fi
+
+if [ -z "$CHROMIUM_GL_MODE" ]; then
+  CHROMIUM_GL_MODE=angle
+  if [ "$SUVOS_RENDER_PROFILE" = "qemu-tcg" ] && [ "$CHROMIUM_ARTIFACT_VENDOR" = "suvos-chromium-source" ]; then
+    CHROMIUM_GL_MODE=disabled
+    export WLR_RENDERER="${WLR_RENDERER:-pixman}"
+  fi
+fi
+
+case "$CHROMIUM_GL_MODE" in
+  angle|disabled) ;;
+  *)
+    echo "suvos-gui: unsupported chromium GL mode: $CHROMIUM_GL_MODE"
+    exit 1
+    ;;
+esac
+
+case "$GUI_PROBE" in
+  "")
+    ;;
+  sleep)
+    echo "suvos-gui: starting Cage probe with sleep"
+    su-exec "$BROWSER_USER" cage $SUVOS_CAGE_FLAGS -- /bin/sleep 15
+    rc="$?"
+    echo "suvos-gui: Cage probe exited rc=$rc"
+    dump_exit_diagnostics
+    exit "$rc"
+    ;;
+  *)
+    echo "suvos-gui: unsupported gui probe: $GUI_PROBE"
+    exit 1
+    ;;
+esac
 
 set -- "$CHROMIUM_BIN" \
   --ozone-platform=wayland \
@@ -267,16 +372,29 @@ set -- "$CHROMIUM_BIN" \
   --no-default-browser-check \
   --disable-background-networking \
   --disable-sync \
-  --disable-dev-shm-usage
+  --disable-dev-shm-usage \
+  --disable-crash-reporter \
+  --disable-breakpad
 
 if [ "$SUVOS_RENDER_PROFILE" = "qemu-tcg" ] || [ "$SUVOS_RENDER_PROFILE" = "qemu-hvf" ]; then
   CHROMIUM_ENV_PREFIX="LIBGL_ALWAYS_SOFTWARE=${LIBGL_ALWAYS_SOFTWARE:-1} MESA_LOADER_DRIVER_OVERRIDE=${MESA_LOADER_DRIVER_OVERRIDE:-llvmpipe}"
-  set -- "$@" \
-    --use-gl=angle \
-    --use-angle=gl-egl \
-    --disable-vulkan \
-    --disable-accelerated-video-decode \
-    --disable-features=Vulkan,VulkanFromANGLE,VaapiVideoDecodeLinuxGL,VaapiVideoEncoder
+fi
+
+if [ "$SUVOS_RENDER_PROFILE" = "qemu-tcg" ] || [ "$SUVOS_RENDER_PROFILE" = "qemu-hvf" ] || [ "$SUVOS_RENDER_PROFILE" = "qemu-whpx" ]; then
+  if [ "$CHROMIUM_GL_MODE" = "angle" ]; then
+    set -- "$@" \
+      --use-gl=angle \
+      --use-angle=gl-egl \
+      --disable-vulkan \
+      --disable-accelerated-video-decode \
+      --disable-features=Vulkan,VulkanFromANGLE,VaapiVideoDecodeLinuxGL,VaapiVideoEncoder
+  else
+    set -- "$@" \
+      --disable-gpu \
+      --disable-vulkan \
+      --disable-accelerated-video-decode \
+      --disable-features=Vulkan,VulkanFromANGLE,VaapiVideoDecodeLinuxGL,VaapiVideoEncoder
+  fi
 fi
 
 ALLOW_NO_SANDBOX=0
@@ -311,6 +429,9 @@ done
 
 echo "suvos-gui: starting Cage with Chromium"
 echo "suvos-gui: urls=$SUVOS_GUI_URLS"
+echo "suvos-gui: chromium artifact vendor: ${CHROMIUM_ARTIFACT_VENDOR:-unknown}"
+echo "suvos-gui: chromium gl mode: $CHROMIUM_GL_MODE"
+echo "suvos-gui: wlroots renderer: ${WLR_RENDERER:-auto}"
 printf 'suvos-gui: chromium argv:'
 for arg in "$@"; do
   printf ' [%s]' "$arg"
@@ -318,7 +439,12 @@ done
 printf '\n'
 # Intentional shell splitting: this variable is a developer boot override.
 if [ -n "$CHROMIUM_ENV_PREFIX" ]; then
-  exec su-exec "$BROWSER_USER" cage $SUVOS_CAGE_FLAGS -- env $CHROMIUM_ENV_PREFIX "$@"
+  su-exec "$BROWSER_USER" cage $SUVOS_CAGE_FLAGS -- env $CHROMIUM_ENV_PREFIX "$@"
+else
+  su-exec "$BROWSER_USER" cage $SUVOS_CAGE_FLAGS -- "$@"
 fi
 
-exec su-exec "$BROWSER_USER" cage $SUVOS_CAGE_FLAGS -- "$@"
+rc="$?"
+echo "suvos-gui: Cage/Chromium exited rc=$rc"
+dump_exit_diagnostics
+exit "$rc"

@@ -2,7 +2,8 @@
 
 SUVOS_HOST_ARCH ?= $(shell uname -m)
 SUVOS_HOST_OS ?= $(shell uname -s)
-RUNOS_BACKEND ?= $(if $(filter arm64 aarch64,$(SUVOS_HOST_ARCH)),arm64,qemu)
+SUVOS_HOST_IS_WSL ?= $(shell if [ -r /proc/sys/kernel/osrelease ] && grep -qi microsoft /proc/sys/kernel/osrelease; then echo 1; else echo 0; fi)
+RUNOS_BACKEND ?= $(if $(filter arm64 aarch64,$(SUVOS_HOST_ARCH)),arm64,$(if $(filter 1,$(SUVOS_HOST_IS_WSL)),windows-qemu,qemu))
 SUVOS_QEMU_X86_MEMORY ?= 4096M
 SUVOS_QEMU_X86_CPUS ?= 4
 SUVOS_ARM64_MEMORY ?= 8192M
@@ -18,7 +19,7 @@ SUVOS_ARM64_GUI_VIDEO_DEVICE ?= virtio-gpu-pci,xres=$(SUVOS_GUI_WIDTH),yres=$(SU
 SUVOS_GUI_CONNECTOR ?= Virtual-1
 SUVOS_GUI_KERNEL_VIDEO ?= video=$(SUVOS_GUI_CONNECTOR):$(SUVOS_GUI_WIDTH)x$(SUVOS_GUI_HEIGHT)-32
 SUVOS_GUI_INPUT_DEVICES ?= -device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0 -device usb-tablet,bus=xhci.0 -device usb-mouse,bus=xhci.0
-SUVOS_GUI_AUDIO_DEVICES ?= -audiodev $(SUVOS_QEMU_AUDIO_BACKEND),id=suvos-audio,out.mixing-engine=on -device virtio-sound-pci,audiodev=suvos-audio,streams=1
+SUVOS_GUI_AUDIO_DEVICES ?= $(if $(filter Linux,$(SUVOS_HOST_OS)),,-audiodev $(SUVOS_QEMU_AUDIO_BACKEND),id=suvos-audio,out.mixing-engine=on -device virtio-sound-pci,audiodev=suvos-audio,streams=1)
 
 all: initramfs
 
@@ -85,6 +86,10 @@ runos:
 	$(MAKE) run-$(RUNOS_BACKEND)
 
 run-qemu: run-qemu-x86
+
+run-windows-qemu: initramfs-aec
+	@echo "SuvOS Windows/WHPX GUI size: $(SUVOS_GUI_WIDTH)x$(SUVOS_GUI_HEIGHT)"
+	SUVOS_GUI_WIDTH=$(SUVOS_GUI_WIDTH) SUVOS_GUI_HEIGHT=$(SUVOS_GUI_HEIGHT) scripts/run-suvos-windows-qemu.sh
 
 run-qemu-x86: initramfs-aec
 	@echo "SuvOS GUI size: $(SUVOS_GUI_WIDTH)x$(SUVOS_GUI_HEIGHT)"
