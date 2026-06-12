@@ -103,13 +103,27 @@ suvos_default_machine() {
   esac
 }
 
+suvos_kvm_usable() {
+  [ -r /dev/kvm ] && [ -w /dev/kvm ] || return 1
+
+  if command -v timeout >/dev/null 2>&1; then
+    local qemu_bin
+    qemu_bin="$(suvos_qemu_bin x86_64)"
+    timeout 2 "$qemu_bin" -machine accel=kvm -display none -nodefaults -S >/dev/null 2>&1
+    [ "$?" -eq 124 ]
+    return
+  fi
+
+  return 0
+}
+
 suvos_default_accel() {
   local arch="$1"
   local host_arch
   host_arch="$(uname -m)"
   case "$arch:$host_arch" in
     x86_64:x86_64)
-      if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+      if suvos_kvm_usable; then
         echo "kvm"
       else
         echo "tcg"
